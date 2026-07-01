@@ -1,0 +1,237 @@
+# Expense AI — AI-Powered Telegram Expense Tracker
+
+A personal finance assistant you talk to like a human, over Telegram.
+Send it a message like *"Spent 85,000 on groceries"* or *"How much did I
+spend this month?"* and it understands, categorizes, stores, and answers
+— powered by an LLM you configure (OpenAI, OpenRouter, Ollama, vLLM, or
+any OpenAI-compatible endpoint).
+
+```
+"Spent 85,000 UZS on groceries."        -> recorded as an expense, categorized "Food"
+"Salary came today: 6,500,000 UZS."     -> recorded as income
+"How much did I spend this month?"      -> natural-language query, answered from SQLite
+"Show me a pie chart of this month"     -> chart image sent back
+```
+
+---
+
+## Features
+
+- **Natural language** expense & income logging — no commands required.
+- **LLM-driven intent understanding** — pluggable across OpenAI, OpenRouter,
+  Ollama, vLLM, LM Studio, or any OpenAI-compatible server.
+- **SQLite storage** (via SQLAlchemy) — expenses, income, and OCR'd receipt
+  metadata.
+- **Automatic categorization** into a fixed set of categories (Food,
+  Transport, Gym, Supplements, Health, Entertainment, Shopping, Education,
+  Bills, Rent, Coffee, Restaurants, Electronics, Subscriptions, Travel,
+  Family, Gifts, Other).
+- **Running balance** (income − expenses), tracked per currency.
+- **Monthly/weekly/daily summaries** with category breakdowns and
+  percentages.
+- **Receipt photo OCR** (Tesseract) → LLM classification → stored expense.
+- **Editing & deletion**: "Undo the last expense", "Change groceries to
+  95,000", "Delete today's taxi".
+- **Search**: "Show everything over 500,000", "Search for protein".
+- **Export**: CSV, Excel (.xlsx), JSON, or PDF.
+- **Charts** (matplotlib): category pie chart, monthly/weekly spending bar
+  charts, balance-over-time line chart.
+
+---
+
+## Project Structure
+
+```
+expense_tracker/
+├── expense_ai/
+│   ├── bot.py                # Entrypoint: builds & runs the Telegram bot
+│   ├── config.py              # Typed settings loaded from .env
+│   ├── logging_setup.py       # Console + rotating file logging
+│   ├── llm.py                 # OpenAI-compatible client wrapper
+│   ├── parser.py               # LLM prompt + intent classification
+│   ├── finance.py              # Balance / summary / category math
+│   ├── periods.py               # "this_month" -> (start, end) resolution
+│   ├── ocr.py                   # Tesseract receipt OCR
+│   ├── reports.py               # matplotlib chart generation
+│   ├── database/
+│   │   ├── __init__.py           # Engine/session management, init_db()
+│   │   ├── models.py              # SQLAlchemy ORM models
+│   │   └── repository.py          # All CRUD queries
+│   ├── models/
+│   │   └── schemas.py             # Pydantic schemas for LLM-structured intents
+│   ├── handlers/
+│   │   ├── common.py               # Owner-only access guard
+│   │   ├── commands.py              # /start, /help
+│   │   ├── text.py                   # Routes text messages by intent
+│   │   ├── photo.py                   # Receipt photo -> OCR -> expense
+│   │   ├── queries.py                  # Read-only Q&A (balance, summaries...)
+│   │   └── edit_search.py               # Edit / delete / search / export
+│   └── tests/                    # pytest suite
+├── data/                       # SQLite DB + downloaded receipt photos (gitignored)
+├── exports/                    # Generated CSV/XLSX/JSON/PDF/PNG files (gitignored)
+├── logs/                       # Rotating log files (gitignored)
+├── requirements.txt
+├── .env.example
+└── README.md
+```
+
+---
+
+## Setup
+
+### 1. Prerequisites
+
+- Python 3.12+
+- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) installed
+  and on your `PATH` (for receipt photo support):
+  ```bash
+  sudo apt install tesseract-ocr   # Debian/Ubuntu
+  brew install tesseract           # macOS
+  ```
+- A Telegram bot token from [@BotFather](https://t.me/BotFather).
+
+### 2. Install
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3. Configure
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
+| `TELEGRAM_ALLOWED_USER_ID` | Your Telegram numeric user ID; restricts the bot to you only. Leave empty to allow anyone with the token. |
+| `LLM_BASE_URL` | OpenAI-compatible base URL (see table below) |
+| `LLM_API_KEY` | API key (leave as-is/blank for local servers that don't need one) |
+| `LLM_MODEL` | Model name/id |
+| `DATABASE_PATH` | Path to the SQLite file (default `data/expenses.db`) |
+| `DEFAULT_CURRENCY` | Currency assumed when the user doesn't mention one |
+| `TESSERACT_CMD` | Path to the `tesseract` binary if not on `PATH` |
+
+#### Switching LLM providers
+
+Because every provider below speaks the OpenAI `/v1/chat/completions`
+protocol, switching is just changing three `.env` values — no code changes:
+
+| Provider | `LLM_BASE_URL` | Notes |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | Needs `LLM_API_KEY` |
+| OpenRouter | `https://openrouter.ai/api/v1` | Needs `LLM_API_KEY` |
+| Ollama | `http://localhost:11434/v1` | `ollama pull <model>` first |
+| vLLM | `http://localhost:8000/v1` | Run `vllm serve <model>` |
+| LM Studio | `http://localhost:1234/v1` | Enable "Local Server" in LM Studio |
+
+To find your Telegram user ID, message [@userinfobot](https://t.me/userinfobot).
+
+### 4. Run
+
+```bash
+python -m expense_ai.bot
+```
+
+The bot initializes the SQLite database automatically on first run and
+starts polling for Telegram messages.
+
+---
+
+## Usage examples
+
+**Recording:**
+- "Spent 85,000 UZS on groceries."
+- "Bought protein for 420,000."
+- "Salary came today: 6,500,000 UZS."
+- "Freelance payment 350 dollars."
+
+**Querying:**
+- "How much did I spend today?"
+- "Show food expenses this month."
+- "Biggest expenses this month?"
+- "Current balance?"
+- "Summarize June."
+
+**Editing:**
+- "Undo the last expense."
+- "Change grocery expense to 95,000."
+- "Move protein from Food to Supplements."
+
+**Search & export:**
+- "Show everything over 500,000."
+- "Search for protein."
+- "Export this month as Excel."
+
+**Charts:**
+- "Show me a pie chart of this month's spending."
+- "Show my monthly spending chart."
+
+**Receipts:** just send a photo of a receipt — the bot OCRs it, asks the
+LLM to classify it, and records the expense automatically.
+
+---
+
+## Testing
+
+```bash
+python -m pytest expense_ai/tests/ -v
+```
+
+Tests cover the repository (CRUD), finance calculations (balance,
+summaries, percentages), period resolution, and LLM-output schema
+validation. They run against an isolated temporary SQLite file — your
+real data is never touched.
+
+---
+
+## Architecture notes
+
+- **The LLM never touches the database directly.** `parser.py` asks the
+  LLM for JSON, then validates it against a Pydantic schema
+  (`models/schemas.py`) before anything is stored — malformed or
+  hallucinated output becomes an `UnknownIntent` instead of bad data.
+- **Multi-currency is additive, not converted.** Since there's no
+  reliable exchange-rate source wired in, balances/summaries report each
+  currency separately rather than guessing a conversion rate.
+- **`database/repository.py` is the only place that writes raw SQL
+  queries** — every other module (finance, handlers, exports, charts)
+  goes through it, so storage details stay swappable.
+
+---
+
+## Extending
+
+The architecture is designed so these can be added without restructuring:
+
+- **Voice messages**: transcribe with Whisper (or an OpenAI-compatible
+  STT endpoint), then feed the transcript into `parser.parse_message`
+  exactly like a text message.
+- **Budget planning / recurring expenses**: new SQLAlchemy models next to
+  `Expense`/`Income` in `database/models.py`, new repository functions,
+  a new intent type in `models/schemas.py`.
+- **Multiple users**: add a `telegram_user_id` column to `Expense`/
+  `Income`, scope every repository query by it, and drop the
+  single-owner restriction in `handlers/common.py`.
+- **Web dashboard**: the `database/repository.py` functions are already
+  framework-agnostic — a FastAPI app could import them directly.
+
+---
+
+## Troubleshooting
+
+- **"This bot is private."** — Set `TELEGRAM_ALLOWED_USER_ID` to your own
+  ID, or leave it blank during testing.
+- **OCR returns garbage / empty text** — make sure `tesseract-ocr` is
+  installed and `TESSERACT_CMD` points to the right binary; try a
+  clearer, well-lit, non-blurry photo.
+- **LLM returns non-JSON / errors** — check `LLM_BASE_URL` and
+  `LLM_MODEL` match what your provider expects; check `logs/bot.log` for
+  the raw response.
+- **Charts say "not enough data"** — you need at least one expense in the
+  requested period for a chart to be generated.

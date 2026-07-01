@@ -1,0 +1,11 @@
+services:
+  expense-bot:
+    build: .
+    container_name: expense-tracker-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./exports:/app/exports

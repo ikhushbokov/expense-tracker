@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+data/
+logs/
+exports/
+.pytest_cache/
+.claude/
