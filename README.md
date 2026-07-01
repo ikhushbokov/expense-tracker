@@ -36,9 +36,17 @@ any OpenAI-compatible endpoint).
 - **Export**: CSV, Excel (.xlsx), JSON, or PDF.
 - **Charts** (matplotlib): category pie chart, monthly/weekly spending bar
   charts, balance-over-time line chart.
-- **Balance correction**: declare your real balance in plain language
-  (e.g. "I have two cards, 9710 card: 411k, 3901 card: 629k") and the bot
-  reconciles the stored balance to match via an adjustment entry.
+- **Two separate money buckets — balance and savings**: "balance" is your
+  day-to-day spendable money; "savings" is set aside for a goal and never
+  counted in balance/spending queries unless you ask for it specifically.
+  "Total" / "net worth" is the two combined.
+- **Balance/savings correction**: declare your real balance or savings in
+  plain language (e.g. "I have two cards, 9710 card: 411k, 3901 card:
+  629k", or "I have 2,000,000 saved up") and the bot reconciles the
+  stored total via a Transfer entry — this is a correction, never counted
+  as income or spending.
+- **Transfers**: "Transfer 200,000 from balance to savings" moves money
+  between the two buckets without affecting your total net worth.
 - **Resilient to LLM/network outages**: if the LLM is unreachable when you
   message the bot, it tells you plainly, saves your message to a durable
   queue, and automatically retries every `RETRY_QUEUE_INTERVAL_SECONDS`
@@ -167,6 +175,10 @@ starts polling for Telegram messages.
 
 ## Usage examples
 
+**Quick commands** (instant, bypass the LLM entirely — work even during an
+LLM outage): `/today`, `/week`, `/month` (spending summaries), `/budget`
+(balance), `/savings`, `/total` (balance + savings), `/biggest`, `/chart`.
+
 **Recording:**
 - "Spent 85,000 UZS on groceries."
 - "Bought protein for 420,000."
@@ -197,9 +209,13 @@ starts polling for Telegram messages.
 **Receipts:** just send a photo of a receipt — the bot OCRs it, asks the
 LLM to classify it, and records the expense automatically.
 
-**Balance correction:**
+**Balance & savings:**
 - "My current balance is: I have two cards, 9710 card: 411k, 3901 card: 629k."
 - "I actually have 2,000,000 left."
+- "I have 2,000,000 saved up." (sets savings, not balance)
+- "Transfer 200,000 from balance to savings."
+- "How much are my savings?"
+- "What's my total money?" / "What's my net worth?"
 
 ---
 
