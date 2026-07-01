@@ -109,6 +109,23 @@ class QueryIntent(LLMIntentBase):
     limit: int = 5
 
 
+class SetBalanceIntent(LLMIntentBase):
+    """User is declaring/correcting their actual current balance (e.g.
+    listing card/account totals) rather than reporting a transaction. The
+    bot reconciles stored balance to this by inserting an adjustment entry
+    for the difference."""
+
+    type: Literal["set_balance"] = "set_balance"
+    total_amount: float
+    currency: str = "UZS"
+    breakdown: str = ""
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, v: str) -> str:
+        return v.upper().strip() if v else "UZS"
+
+
 class EditIntent(LLMIntentBase):
     type: Literal["edit"] = "edit"
     target: Literal["last_expense", "last_income", "search"] = "last_expense"
@@ -165,6 +182,7 @@ AnyIntent = (
     ExpenseIntent
     | IncomeIntent
     | QueryIntent
+    | SetBalanceIntent
     | EditIntent
     | DeleteIntent
     | SearchIntent
@@ -177,6 +195,7 @@ INTENT_MODELS: dict[str, type[BaseModel]] = {
     "expense": ExpenseIntent,
     "income": IncomeIntent,
     "query": QueryIntent,
+    "set_balance": SetBalanceIntent,
     "edit": EditIntent,
     "delete": DeleteIntent,
     "search": SearchIntent,

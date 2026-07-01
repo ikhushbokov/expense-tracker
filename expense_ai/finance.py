@@ -53,6 +53,30 @@ def get_balances(session: Session) -> dict[str, float]:
     return dict(balances)
 
 
+def reconcile_balance(
+    session: Session, *, total_amount: float, currency: str, note: str = ""
+) -> float:
+    """Insert an adjustment entry so the stored balance matches a real-world
+    total the user just reported (e.g. summed card balances).
+
+    Returns the delta that was applied (0.0 if the stored balance already
+    matched, in which case no entry is created).
+    """
+    current = get_balances(session).get(currency, 0.0)
+    delta = total_amount - current
+    if delta == 0:
+        return 0.0
+
+    description = f"Balance adjustment{f': {note}' if note else ''}"
+    if delta > 0:
+        repository.add_income(session, amount=delta, currency=currency, description=description)
+    else:
+        repository.add_expense(
+            session, amount=-delta, currency=currency, category="Other", description=description
+        )
+    return delta
+
+
 def total_expenses_by_currency(
     session: Session, *, start: dt.datetime | None = None, end: dt.datetime | None = None, category: str | None = None
 ) -> dict[str, float]:

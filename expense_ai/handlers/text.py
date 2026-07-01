@@ -8,11 +8,19 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from expense_ai.database import repository, session_scope
-from expense_ai.finance import format_amount, get_balances
+from expense_ai.finance import format_amount, get_balances, reconcile_balance
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.edit_search import handle_delete, handle_edit, handle_export, handle_search
 from expense_ai.handlers.queries import handle_query
-from expense_ai.models.schemas import ChartIntent, DeleteIntent, EditIntent, ExportIntent, QueryIntent, SearchIntent
+from expense_ai.models.schemas import (
+    ChartIntent,
+    DeleteIntent,
+    EditIntent,
+    ExportIntent,
+    QueryIntent,
+    SearchIntent,
+    SetBalanceIntent,
+)
 from expense_ai.parser import parse_message
 from expense_ai.reports import CHART_GENERATORS
 
@@ -71,6 +79,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"Description: {income.description or '-'}\n\n"
             f"Current balance: {format_amount(balance_text, intent.currency)}"
         )
+        await message.reply_text(reply)
+
+    elif intent.type == "set_balance":
+        assert isinstance(intent, SetBalanceIntent)
+        with session_scope() as session:
+            delta = reconcile_balance(
+                session, total_amount=intent.total_amount, currency=intent.currency, note=intent.breakdown
+            )
+        if delta == 0:
+            reply = f"That already matches what I have on record: {format_amount(intent.total_amount, intent.currency)}."
+        else:
+            verb = "Added" if delta > 0 else "Subtracted"
+            reply = (
+                f"\U0001F4CC Balance updated to {format_amount(intent.total_amount, intent.currency)}\n"
+                f"({verb} an adjustment of {format_amount(abs(delta), intent.currency)}"
+                f"{f' — {intent.breakdown}' if intent.breakdown else ''})"
+            )
         await message.reply_text(reply)
 
     elif intent.type == "query":

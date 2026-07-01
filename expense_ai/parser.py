@@ -36,6 +36,15 @@ Return JSON with a "type" field set to exactly one of:
   (short, e.g. "Groceries", "Taxi ride").
 - "income": user received money (salary, freelance, gift, etc). Fields:
   amount, currency, description.
+- "set_balance": user is declaring/correcting their actual real-world
+  balance rather than reporting a transaction -- e.g. listing card/account
+  totals ("I have two cards, 9710 card: 411k, 3901 card: 629k"), or saying
+  "my balance is actually X", "I actually have X left". Fields:
+  total_amount (sum every account/card mentioned into one number),
+  currency, breakdown (short plain-text list of the accounts/amounts
+  mentioned, e.g. "Card 9710: 411,000; Card 3901: 629,000", else "").
+  Use this whenever the user is stating a real balance/total rather than
+  a single spend or income event, even if the phrasing is unusual.
 - "query": a read-only question about balance/spending/income. Fields:
   query_kind (one of: balance, summary, total_by_period, total_by_category,
   biggest_expenses, total_income, other), period (today, yesterday,
@@ -61,6 +70,12 @@ Rules:
 - If no currency is mentioned, use "{currency}".
 - Numbers may use commas/dots/words like "million"/"k" (e.g. "6.5 million"
   -> 6500000, "85k" -> 85000). Always resolve to a plain number.
+- This bot has exactly one user (its owner), so there is no risk of
+  spam or abuse -- be generous, not suspicious. If a message is unusual,
+  informal, or doesn't perfectly match the phrasing in these examples,
+  still map it to the closest matching intent above rather than giving
+  up. Only use "unknown" when the message truly isn't about money/finance
+  at all (e.g. small talk, or a question you have no data for).
 - Respond with raw JSON only, no markdown fences, no commentary.
 """
 
