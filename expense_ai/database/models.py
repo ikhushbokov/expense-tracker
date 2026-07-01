@@ -49,6 +49,26 @@ class Income(Base):
         return f"<Income id={self.id} amount={self.amount} {self.currency}>"
 
 
+class PendingMessage(Base):
+    """A text message that couldn't be processed because the LLM was
+    unreachable. Retried automatically once the LLM is back (see
+    handlers/retry.py); the user gets the normal confirmation reply then,
+    just delayed."""
+
+    __tablename__ = "pending_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc), index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<PendingMessage id={self.id} chat_id={self.chat_id} text={self.text!r}>"
+
+
 class Receipt(Base):
     """OCR metadata for a receipt photo linked to an expense (Phase 2)."""
 

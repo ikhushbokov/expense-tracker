@@ -12,7 +12,7 @@ import datetime as dt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from expense_ai.database.models import Expense, Income, Receipt
+from expense_ai.database.models import Expense, Income, PendingMessage, Receipt
 
 
 def add_expense(
@@ -164,3 +164,30 @@ def list_income(
         stmt = stmt.where(Income.datetime < end)
     stmt = stmt.order_by(Income.datetime.desc())
     return list(session.scalars(stmt).all())
+
+
+def enqueue_pending_message(session: Session, *, chat_id: int, text: str) -> PendingMessage:
+    pending = PendingMessage(chat_id=chat_id, text=text)
+    session.add(pending)
+    session.flush()
+    return pending
+
+
+def list_pending_messages(session: Session) -> list[PendingMessage]:
+    stmt = select(PendingMessage).order_by(PendingMessage.created_at.asc())
+    return list(session.scalars(stmt).all())
+
+
+def increment_pending_attempts(session: Session, pending_id: int) -> None:
+    pending = session.get(PendingMessage, pending_id)
+    if pending is not None:
+        pending.attempts += 1
+        session.flush()
+
+
+def delete_pending_message(session: Session, pending_id: int) -> bool:
+    pending = session.get(PendingMessage, pending_id)
+    if pending is None:
+        return False
+    session.delete(pending)
+    return True

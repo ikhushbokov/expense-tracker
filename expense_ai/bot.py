@@ -11,6 +11,7 @@ from expense_ai.config import settings
 from expense_ai.database import init_db
 from expense_ai.handlers.commands import handle_help, handle_start
 from expense_ai.handlers.photo import handle_photo
+from expense_ai.handlers.retry import retry_pending_messages
 from expense_ai.handlers.text import handle_text
 from expense_ai.logging_setup import setup_logging
 
@@ -33,6 +34,13 @@ def build_application() -> Application:
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(handle_error)
+
+    application.job_queue.run_repeating(
+        retry_pending_messages,
+        interval=settings.retry_queue_interval_seconds,
+        first=10,
+        name="retry_pending_messages",
+    )
 
     return application
 

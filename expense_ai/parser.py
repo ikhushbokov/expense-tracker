@@ -93,18 +93,16 @@ def _build_system_prompt() -> str:
 async def parse_message(text: str) -> AnyIntent:
     """Classify a user message and return a validated intent object.
 
-    Falls back to ``UnknownIntent`` (rather than raising) whenever the LLM
-    call fails or returns something that doesn't validate, so a single bad
-    message never crashes the bot.
+    Raises ``LLMError`` (see llm.py) when the LLM itself is unreachable --
+    callers are expected to catch that separately (queue the message and
+    retry later) rather than treating it the same as a genuinely
+    unrecognized message. Falls back to ``UnknownIntent`` only when the LLM
+    *did* respond but the result doesn't match any known intent shape.
     """
-    try:
-        raw = await llm_client.complete_json(
-            system_prompt=_build_system_prompt(),
-            user_prompt=text,
-        )
-    except Exception as exc:
-        logger.error("Intent parsing failed for message %r: %s", text, exc)
-        return UnknownIntent(reason=f"LLM error: {exc}")
+    raw = await llm_client.complete_json(
+        system_prompt=_build_system_prompt(),
+        user_prompt=text,
+    )
 
     intent_type = raw.get("type", "unknown")
     model = INTENT_MODELS.get(intent_type, UnknownIntent)

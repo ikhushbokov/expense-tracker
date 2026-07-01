@@ -12,6 +12,8 @@ from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.finance import format_amount, get_balances
 from expense_ai.handlers.common import restrict_to_owner
+from expense_ai.handlers.text import UNREACHABLE_MESSAGE
+from expense_ai.llm import LLMError
 from expense_ai.ocr import extract_receipt_text
 from expense_ai.parser import parse_message
 
@@ -49,10 +51,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     caption_hint = f"\n\nUser caption: {message.caption}" if message.caption else ""
-    intent = await parse_message(
+    receipt_prompt = (
         f"This text was OCR-extracted from a receipt photo, extract the total amount, "
         f"merchant, and category as an expense:\n\n{raw_text}{caption_hint}"
     )
+    try:
+        intent = await parse_message(receipt_prompt)
+    except LLMError as exc:
+        logger.warning("LLM unreachable, queuing receipt text: %s", exc)
+        with session_scope() as session:
+            repository.enqueue_pending_message(session, chat_id=message.chat_id, text=receipt_prompt)
+        await message.reply_text(UNREACHABLE_MESSAGE)
+        return
 
     if intent.type != "expense":
         await message.reply_text(

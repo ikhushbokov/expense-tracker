@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     # Only meaningful for reasoning models (e.g. o-series, gpt-5.x). Left empty
     # to omit the parameter entirely for providers/models that don't support it.
     llm_reasoning_effort: str = Field(default="", alias="LLM_REASONING_EFFORT")
+    # How often (seconds) to retry messages queued while the LLM was down.
+    retry_queue_interval_seconds: float = Field(default=60.0, alias="RETRY_QUEUE_INTERVAL_SECONDS")
 
     # --- Database ---------------------------------------------------------
     database_path: str = Field(default="data/expenses.db", alias="DATABASE_PATH")
