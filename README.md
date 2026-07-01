@@ -36,6 +36,16 @@ any OpenAI-compatible endpoint).
 - **Export**: CSV, Excel (.xlsx), JSON, or PDF.
 - **Charts** (matplotlib): category pie chart, monthly/weekly spending bar
   charts, balance-over-time line chart.
+- **Balance correction**: declare your real balance in plain language
+  (e.g. "I have two cards, 9710 card: 411k, 3901 card: 629k") and the bot
+  reconciles the stored balance to match via an adjustment entry.
+- **Resilient to LLM/network outages**: if the LLM is unreachable when you
+  message the bot, it tells you plainly, saves your message to a durable
+  queue, and automatically retries every `RETRY_QUEUE_INTERVAL_SECONDS`
+  (default 60s) once the LLM is back — you get the normal confirmation
+  reply, just delayed, prefixed to make clear it was queued.
+- **Docker packaging**: `docker compose up -d` with `restart: unless-stopped`
+  so the bot survives reboots as long as Docker itself starts on boot.
 
 ---
 
@@ -134,9 +144,21 @@ To find your Telegram user ID, message [@userinfobot](https://t.me/userinfobot).
 
 ### 4. Run
 
+**Directly:**
 ```bash
 python -m expense_ai.bot
 ```
+
+**Or with Docker (recommended for always-on use):**
+```bash
+docker compose up -d --build
+```
+This runs the bot in a container with `restart: unless-stopped`, so as long
+as Docker itself is enabled at boot (`systemctl enable docker`, which is the
+default on most distros), the bot comes back automatically after every
+reboot. Data/logs/exports are bind-mounted to `./data`, `./logs`,
+`./exports` so nothing lives only inside the container. Check on it with
+`docker compose logs -f` / `docker compose ps`.
 
 The bot initializes the SQLite database automatically on first run and
 starts polling for Telegram messages.
@@ -174,6 +196,10 @@ starts polling for Telegram messages.
 
 **Receipts:** just send a photo of a receipt — the bot OCRs it, asks the
 LLM to classify it, and records the expense automatically.
+
+**Balance correction:**
+- "My current balance is: I have two cards, 9710 card: 411k, 3901 card: 629k."
+- "I actually have 2,000,000 left."
 
 ---
 
