@@ -57,11 +57,14 @@ Return JSON with a "type" field set to exactly one of:
   3901: 629,000", else ""). Use this whenever the user is stating a real
   balance/total rather than a single spend or income event, even if the
   phrasing is unusual.
-- "transfer": user wants to move money between balance and savings, e.g.
-  "transfer 200,000 from balance to savings", "move 500k from savings to
-  balance", "put 100,000 into savings", "take 50,000 out of savings".
-  Fields: from_account (balance or savings), to_account (balance or
-  savings), amount (positive), currency, note.
+- "transfer": user is DELIBERATELY moving money between balance and
+  savings for a purpose, e.g. "transfer 200,000 from balance to savings",
+  "move 500k from savings to balance", "put 100,000 into savings for the
+  trip". Fields: from_account (balance or savings), to_account (balance
+  or savings), amount (positive), currency, note.
+  Do NOT use "transfer" just because a message mentions an account and an
+  amount -- see the "delete"/"edit" note below for the "undo a mistake"
+  case, which looks similar but means something different.
 - "query": a read-only question about balance/spending/income. Fields:
   query_kind (one of: balance, summary, total_by_period, total_by_category,
   biggest_expenses, total_income, other), period (today, yesterday,
@@ -72,11 +75,32 @@ Return JSON with a "type" field set to exactly one of:
   "savings" if asking specifically about savings, "total" if asking for
   net worth / total money / balance and savings combined).
 - "edit": user wants to modify a previous entry. Fields: target
-  (last_expense, last_income, or search), keyword (to find the entry if
-  target is "search", else null), new_amount, new_category,
-  new_description (only the fields being changed; null otherwise).
-- "delete": user wants to remove entries. Fields: target (last_expense,
-  last_income, or search), keyword, period, category.
+  (last_expense, last_income, last_transfer, or search), keyword (to find
+  the entry if target is "search", else null), new_amount, new_category,
+  new_description (only the fields being changed; null otherwise),
+  match_amount, match_currency.
+  Use target "last_transfer" to correct the amount of the last balance/
+  savings adjustment or transfer (e.g. "that savings amount was wrong,
+  it should be 500,000" -- if it's ambiguous whether they mean "fix the
+  number" vs "restate my current total", either edit or a fresh
+  set_balance works; prefer whichever the phrasing more directly matches).
+  If they mention the old amount/currency being corrected (e.g. "the 200
+  USD savings entry should be 500"), fill in match_amount/match_currency
+  from that old value so the right entry is found among several.
+- "delete": user wants to remove/undo entries entirely -- including
+  undoing a balance/savings correction or transfer they didn't mean to
+  make. Fields: target (last_expense, last_income, last_transfer, or
+  search), keyword, period, category, amount, currency.
+  IMPORTANT: "delete/remove/undo X from savings/balance" (with no second
+  account named as a destination) means undo that correction/entry --
+  use "delete" with target "last_transfer", NOT "transfer". Only use
+  "transfer" when the user names both where the money is coming from AND
+  where it should go.
+  When target is "last_transfer" and the user mentions a specific amount
+  (e.g. "delete the 200 USD from savings"), ALWAYS fill in amount and
+  currency from what they said -- there may be more than one adjustment
+  in different currencies, and these fields pick out the right one instead
+  of just the most recent one overall.
 - "search": user wants to find/list past entries. Fields: keyword,
   min_amount, max_amount, period, category.
 - "export": user wants their data exported. Fields: format (csv, xlsx,

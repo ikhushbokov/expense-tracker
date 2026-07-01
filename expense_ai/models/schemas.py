@@ -156,11 +156,15 @@ class TransferIntent(LLMIntentBase):
 
 class EditIntent(LLMIntentBase):
     type: Literal["edit"] = "edit"
-    target: Literal["last_expense", "last_income", "search"] = "last_expense"
+    target: Literal["last_expense", "last_income", "last_transfer", "search"] = "last_expense"
     keyword: str | None = None
     new_amount: float | None = None
     new_category: str | None = None
     new_description: str | None = None
+    # Only used to disambiguate target="last_transfer" when more than one
+    # currency/amount could match (see DeleteIntent.amount/currency).
+    match_amount: float | None = None
+    match_currency: str | None = None
 
     @field_validator("new_category")
     @classmethod
@@ -169,13 +173,29 @@ class EditIntent(LLMIntentBase):
             return None
         return v if v in CATEGORIES else "Other"
 
+    @field_validator("match_currency")
+    @classmethod
+    def _upper_currency(cls, v: str | None) -> str | None:
+        return v.upper().strip() if v else v
+
 
 class DeleteIntent(LLMIntentBase):
     type: Literal["delete"] = "delete"
-    target: Literal["last_expense", "last_income", "search"] = "last_expense"
+    target: Literal["last_expense", "last_income", "last_transfer", "search"] = "last_expense"
     keyword: str | None = None
     period: Literal["today", "yesterday", "this_week", "this_month", "all_time"] = "all_time"
     category: str | None = None
+    # Only used to disambiguate target="last_transfer" when more than one
+    # currency/amount could match (e.g. savings holds both USD and UZS
+    # adjustments) -- picks the most recent transfer matching these instead
+    # of blindly the globally-last one.
+    amount: float | None = None
+    currency: str | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, v: str | None) -> str | None:
+        return v.upper().strip() if v else v
 
 
 class SearchIntent(LLMIntentBase):

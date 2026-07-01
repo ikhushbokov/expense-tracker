@@ -92,6 +92,8 @@ def list_transfers(
     account: str | None = None,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    amount: float | None = None,
+    currency: str | None = None,
 ) -> list[Transfer]:
     stmt = select(Transfer)
     if account is not None:
@@ -100,8 +102,40 @@ def list_transfers(
         stmt = stmt.where(Transfer.datetime >= start)
     if end is not None:
         stmt = stmt.where(Transfer.datetime < end)
+    if amount is not None:
+        stmt = stmt.where(Transfer.amount == amount)
+    if currency is not None:
+        stmt = stmt.where(Transfer.currency == currency)
     stmt = stmt.order_by(Transfer.datetime.desc())
     return list(session.scalars(stmt).all())
+
+
+def last_transfer(session: Session) -> Transfer | None:
+    stmt = select(Transfer).order_by(Transfer.datetime.desc(), Transfer.id.desc()).limit(1)
+    return session.scalars(stmt).first()
+
+
+def get_transfer(session: Session, transfer_id: int) -> Transfer | None:
+    return session.get(Transfer, transfer_id)
+
+
+def update_transfer(session: Session, transfer_id: int, **fields: object) -> Transfer | None:
+    transfer = session.get(Transfer, transfer_id)
+    if transfer is None:
+        return None
+    for key, value in fields.items():
+        if value is not None and hasattr(transfer, key):
+            setattr(transfer, key, value)
+    session.flush()
+    return transfer
+
+
+def delete_transfer(session: Session, transfer_id: int) -> bool:
+    transfer = session.get(Transfer, transfer_id)
+    if transfer is None:
+        return False
+    session.delete(transfer)
+    return True
 
 
 def attach_receipt(

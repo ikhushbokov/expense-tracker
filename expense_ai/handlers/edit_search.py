@@ -9,10 +9,12 @@ from pathlib import Path
 
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
-from expense_ai.database.models import Expense
+from expense_ai.database.models import Expense, Transfer
 from expense_ai.finance import format_amount
 from expense_ai.models.schemas import DeleteIntent, EditIntent, ExportIntent, SearchIntent
 from expense_ai.periods import resolve_period
+
+_ACCOUNT_LABELS = {"balance": "Balance", "savings": "Savings", None: "outside"}
 
 
 def _find_target_expense(session, intent: EditIntent | DeleteIntent) -> Expense | None:
@@ -20,6 +22,27 @@ def _find_target_expense(session, intent: EditIntent | DeleteIntent) -> Expense 
         matches = repository.list_expenses(session, keyword=intent.keyword)
         return matches[0] if matches else None
     return repository.last_expense(session)
+
+
+def _describe_transfer(transfer: Transfer) -> str:
+    frm = _ACCOUNT_LABELS.get(transfer.from_account, transfer.from_account)
+    to = _ACCOUNT_LABELS.get(transfer.to_account, transfer.to_account)
+    return f"{format_amount(transfer.amount, transfer.currency)} ({frm} → {to}{f', ' + transfer.note if transfer.note else ''})"
+
+
+def _find_target_transfer(
+    session, *, amount: float | None = None, currency: str | None = None
+) -> Transfer | None:
+    """Most recent transfer, optionally narrowed by amount/currency so it
+    picks the one the user actually named when more than one could match
+    (e.g. savings holding both a USD and a UZS adjustment)."""
+    if amount is not None or currency is not None:
+        matches = repository.list_transfers(session, amount=amount, currency=currency)
+        if matches:
+            return matches[0]
+        # Nothing matched that amount/currency -- fall back to the global
+        # last rather than silently doing nothing.
+    return repository.last_transfer(session)
 
 
 def handle_edit(intent: EditIntent) -> str:
@@ -38,6 +61,16 @@ def handle_edit(intent: EditIntent) -> str:
                 setattr(income, key, value)
             session.flush()
             return f"✏️ Updated income: {before} → {format_amount(income.amount, income.currency)}"
+
+        if intent.target == "last_transfer":
+            transfer = _find_target_transfer(session, amount=intent.match_amount, currency=intent.match_currency)
+            if transfer is None:
+                return "You don't have any balance/savings adjustments or transfers yet."
+            before = _describe_transfer(transfer)
+            updated = repository.update_transfer(session, transfer.id, amount=intent.new_amount)
+            assert updated is not None
+            after = _describe_transfer(updated)
+            return f"✏️ Adjustment/transfer updated\nBefore: {before}\nAfter: {after}"
 
         expense = _find_target_expense(session, intent)
         if expense is None:
@@ -65,6 +98,14 @@ def handle_delete(intent: DeleteIntent) -> str:
             summary = format_amount(income.amount, income.currency)
             repository.delete_income(session, income.id)
             return f"\U0001F5D1 Deleted income entry: {summary}"
+
+        if intent.target == "last_transfer":
+            transfer = _find_target_transfer(session, amount=intent.amount, currency=intent.currency)
+            if transfer is None:
+                return "You don't have any balance/savings adjustments or transfers yet."
+            summary = _describe_transfer(transfer)
+            repository.delete_transfer(session, transfer.id)
+            return f"\U0001F5D1 Deleted adjustment/transfer: {summary}"
 
         if intent.target == "last_expense":
             expense = repository.last_expense(session)
