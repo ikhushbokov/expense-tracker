@@ -5,11 +5,21 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from expense_ai.config import settings
 from expense_ai.database import init_db
-from expense_ai.handlers.commands import handle_help, handle_start
+from expense_ai.handlers.commands import (
+    BOT_COMMANDS,
+    handle_biggest_command,
+    handle_budget_command,
+    handle_chart_command,
+    handle_help,
+    handle_month_command,
+    handle_start,
+    handle_today_command,
+    handle_week_command,
+)
 from expense_ai.handlers.photo import handle_photo
 from expense_ai.handlers.retry import retry_pending_messages
 from expense_ai.handlers.text import handle_text
@@ -26,11 +36,23 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-def build_application() -> Application:
-    application = Application.builder().token(settings.telegram_bot_token).build()
+async def _post_init(application: Application) -> None:
+    """Register the quick-command menu with Telegram (replaces any prior list)."""
+    await application.bot.set_my_commands(BOT_COMMANDS)
+    logger.info("Registered %d bot commands", len(BOT_COMMANDS))
 
-    application.add_handler(MessageHandler(filters.COMMAND & filters.Regex(r"^/start"), handle_start))
-    application.add_handler(MessageHandler(filters.COMMAND & filters.Regex(r"^/help"), handle_help))
+
+def build_application() -> Application:
+    application = Application.builder().token(settings.telegram_bot_token).post_init(_post_init).build()
+
+    application.add_handler(CommandHandler("start", handle_start))
+    application.add_handler(CommandHandler("help", handle_help))
+    application.add_handler(CommandHandler("today", handle_today_command))
+    application.add_handler(CommandHandler("week", handle_week_command))
+    application.add_handler(CommandHandler("month", handle_month_command))
+    application.add_handler(CommandHandler("budget", handle_budget_command))
+    application.add_handler(CommandHandler("biggest", handle_biggest_command))
+    application.add_handler(CommandHandler("chart", handle_chart_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(handle_error)
