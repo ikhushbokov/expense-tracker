@@ -13,6 +13,7 @@ from expense_ai.models.schemas import (
     QueryIntent,
     SearchIntent,
     SetBalanceIntent,
+    TransferIntent,
     UnknownIntent,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "QueryIntent",
     "SearchIntent",
     "SetBalanceIntent",
+    "TransferIntent",
     "UnknownIntent",
 ]

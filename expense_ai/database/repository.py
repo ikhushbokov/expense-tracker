@@ -12,7 +12,7 @@ import datetime as dt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from expense_ai.database.models import Expense, Income, PendingMessage, Receipt
+from expense_ai.database.models import Expense, Income, PendingMessage, Receipt, Transfer
 
 
 def add_expense(
@@ -24,6 +24,7 @@ def add_expense(
     description: str = "",
     source: str = "text",
     notes: str = "",
+    account: str = "balance",
     when: dt.datetime | None = None,
 ) -> Expense:
     expense = Expense(
@@ -33,6 +34,7 @@ def add_expense(
         description=description,
         source=source,
         notes=notes,
+        account=account,
         datetime=when or dt.datetime.now(dt.timezone.utc),
     )
     session.add(expense)
@@ -46,17 +48,60 @@ def add_income(
     amount: float,
     currency: str,
     description: str = "",
+    account: str = "balance",
     when: dt.datetime | None = None,
 ) -> Income:
     income = Income(
         amount=amount,
         currency=currency,
         description=description,
+        account=account,
         datetime=when or dt.datetime.now(dt.timezone.utc),
     )
     session.add(income)
     session.flush()
     return income
+
+
+def add_transfer(
+    session: Session,
+    *,
+    from_account: str | None,
+    to_account: str | None,
+    amount: float,
+    currency: str,
+    note: str = "",
+    when: dt.datetime | None = None,
+) -> Transfer:
+    transfer = Transfer(
+        from_account=from_account,
+        to_account=to_account,
+        amount=amount,
+        currency=currency,
+        note=note,
+        datetime=when or dt.datetime.now(dt.timezone.utc),
+    )
+    session.add(transfer)
+    session.flush()
+    return transfer
+
+
+def list_transfers(
+    session: Session,
+    *,
+    account: str | None = None,
+    start: dt.datetime | None = None,
+    end: dt.datetime | None = None,
+) -> list[Transfer]:
+    stmt = select(Transfer)
+    if account is not None:
+        stmt = stmt.where((Transfer.from_account == account) | (Transfer.to_account == account))
+    if start is not None:
+        stmt = stmt.where(Transfer.datetime >= start)
+    if end is not None:
+        stmt = stmt.where(Transfer.datetime < end)
+    stmt = stmt.order_by(Transfer.datetime.desc())
+    return list(session.scalars(stmt).all())
 
 
 def attach_receipt(
@@ -132,6 +177,7 @@ def list_expenses(
     min_amount: float | None = None,
     max_amount: float | None = None,
     keyword: str | None = None,
+    account: str | None = None,
 ) -> list[Expense]:
     stmt = select(Expense)
     if start is not None:
@@ -147,6 +193,8 @@ def list_expenses(
     if keyword is not None:
         like = f"%{keyword}%"
         stmt = stmt.where(Expense.description.ilike(like) | Expense.notes.ilike(like))
+    if account is not None:
+        stmt = stmt.where(Expense.account == account)
     stmt = stmt.order_by(Expense.datetime.desc())
     return list(session.scalars(stmt).all())
 
@@ -156,12 +204,15 @@ def list_income(
     *,
     start: dt.datetime | None = None,
     end: dt.datetime | None = None,
+    account: str | None = None,
 ) -> list[Income]:
     stmt = select(Income)
     if start is not None:
         stmt = stmt.where(Income.datetime >= start)
     if end is not None:
         stmt = stmt.where(Income.datetime < end)
+    if account is not None:
+        stmt = stmt.where(Income.account == account)
     stmt = stmt.order_by(Income.datetime.desc())
     return list(session.scalars(stmt).all())
 

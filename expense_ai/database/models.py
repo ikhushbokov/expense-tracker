@@ -25,6 +25,11 @@ class Expense(Base):
     description: Mapped[str] = mapped_column(String(255), default="")
     source: Mapped[str] = mapped_column(String(16), default="text")  # "text" | "photo"
     notes: Mapped[str] = mapped_column(String(255), default="")
+    # Which money bucket this came out of: "balance" (day-to-day spendable
+    # money) or "savings" (set aside for a goal, not day-to-day). Almost
+    # always "balance" -- moving money into/out of savings goes through
+    # Transfer, not this field.
+    account: Mapped[str] = mapped_column(String(32), default="balance", server_default="balance")
 
     receipt: Mapped["Receipt | None"] = relationship(
         back_populates="expense", cascade="all, delete-orphan", uselist=False
@@ -44,9 +49,38 @@ class Income(Base):
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False)
     description: Mapped[str] = mapped_column(String(255), default="")
+    # See Expense.account -- same "balance" vs "savings" bucket concept.
+    account: Mapped[str] = mapped_column(String(32), default="balance", server_default="balance")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Income id={self.id} amount={self.amount} {self.currency}>"
+
+
+class Transfer(Base):
+    """Money moved between accounts (balance <-> savings), or a correction
+    against the outside world (e.g. "my balance is actually X").
+
+    Deliberately kept separate from Expense/Income: a transfer or balance
+    correction is not a transaction you made, so it must never show up in
+    "how much did I spend/earn this week" reports. ``from_account`` /
+    ``to_account`` of ``None`` means "the outside world" (used for
+    corrections rather than an internal move between accounts).
+    """
+
+    __tablename__ = "transfers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    datetime: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc), index=True
+    )
+    from_account: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_account: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    note: Mapped[str] = mapped_column(String(255), default="")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Transfer id={self.id} {self.from_account}->{self.to_account} amount={self.amount} {self.currency}>"
 
 
 class PendingMessage(Base):

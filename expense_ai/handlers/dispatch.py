@@ -14,7 +14,7 @@ from pathlib import Path
 from telegram import Bot, Message
 
 from expense_ai.database import repository, session_scope
-from expense_ai.finance import format_amount, get_balances, reconcile_balance
+from expense_ai.finance import format_amount, get_balances, reconcile_balance, transfer_funds
 from expense_ai.handlers.edit_search import handle_delete, handle_edit, handle_export, handle_search
 from expense_ai.handlers.queries import handle_query
 from expense_ai.models.schemas import (
@@ -25,9 +25,12 @@ from expense_ai.models.schemas import (
     QueryIntent,
     SearchIntent,
     SetBalanceIntent,
+    TransferIntent,
 )
 from expense_ai.parser import parse_message
 from expense_ai.reports import CHART_GENERATORS
+
+ACCOUNT_LABELS = {"balance": "Balance", "savings": "Savings"}
 
 UNKNOWN_MESSAGE = (
     "I couldn't understand that as an expense, income entry, or question.\n"
@@ -95,19 +98,45 @@ async def build_response(text: str) -> BotResponse:
 
     if intent.type == "set_balance":
         assert isinstance(intent, SetBalanceIntent)
+        label = ACCOUNT_LABELS[intent.account]
         with session_scope() as session:
             delta = reconcile_balance(
-                session, total_amount=intent.total_amount, currency=intent.currency, note=intent.breakdown
+                session,
+                total_amount=intent.total_amount,
+                currency=intent.currency,
+                account=intent.account,
+                note=intent.breakdown,
             )
         if delta == 0:
-            text_reply = f"That already matches what I have on record: {format_amount(intent.total_amount, intent.currency)}."
+            text_reply = f"{label} already matches what I have on record: {format_amount(intent.total_amount, intent.currency)}."
         else:
             verb = "Added" if delta > 0 else "Subtracted"
             text_reply = (
-                f"\U0001F4CC Balance updated to {format_amount(intent.total_amount, intent.currency)}\n"
+                f"\U0001F4CC {label} updated to {format_amount(intent.total_amount, intent.currency)}\n"
                 f"({verb} an adjustment of {format_amount(abs(delta), intent.currency)}"
-                f"{f' — {intent.breakdown}' if intent.breakdown else ''})"
+                f"{f' — {intent.breakdown}' if intent.breakdown else ''})\n"
+                "(This is a correction, not counted as income or spending.)"
             )
+        return BotResponse(text=text_reply)
+
+    if intent.type == "transfer":
+        assert isinstance(intent, TransferIntent)
+        with session_scope() as session:
+            transfer_funds(
+                session,
+                from_account=intent.from_account,
+                to_account=intent.to_account,
+                amount=intent.amount,
+                currency=intent.currency,
+                note=intent.note,
+            )
+            new_balances = {account: get_balances(session, account=account) for account in ("balance", "savings")}
+        text_reply = (
+            f"\U0001F501 Transferred {format_amount(intent.amount, intent.currency)} "
+            f"from {ACCOUNT_LABELS[intent.from_account]} to {ACCOUNT_LABELS[intent.to_account]}\n\n"
+            f"Balance: {format_amount(new_balances['balance'].get(intent.currency, 0.0), intent.currency)}\n"
+            f"Savings: {format_amount(new_balances['savings'].get(intent.currency, 0.0), intent.currency)}"
+        )
         return BotResponse(text=text_reply)
 
     if intent.type == "query":

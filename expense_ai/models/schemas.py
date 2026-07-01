@@ -107,18 +107,46 @@ class QueryIntent(LLMIntentBase):
     custom_start: dt.date | None = None
     custom_end: dt.date | None = None
     limit: int = 5
+    # Which money bucket a "balance" question is about: the day-to-day
+    # spendable "balance", the "savings" set aside, or "total" (both
+    # combined / net worth). Only meaningful when query_kind == "balance".
+    account: Literal["balance", "savings", "total"] = "balance"
 
 
 class SetBalanceIntent(LLMIntentBase):
-    """User is declaring/correcting their actual current balance (e.g.
-    listing card/account totals) rather than reporting a transaction. The
-    bot reconciles stored balance to this by inserting an adjustment entry
-    for the difference."""
+    """User is declaring/correcting their actual current balance or savings
+    (e.g. listing card/account totals) rather than reporting a transaction.
+    The bot reconciles the stored total for that account to this via a
+    Transfer entry for the difference -- never as income/expense, since
+    this is a correction, not something earned or spent."""
 
     type: Literal["set_balance"] = "set_balance"
     total_amount: float
     currency: str = "UZS"
+    # Which bucket this correction applies to: "balance" (default -- day to
+    # day spendable money, e.g. summed bank cards) or "savings" (money set
+    # aside for a goal, not day-to-day spending).
+    account: Literal["balance", "savings"] = "balance"
     breakdown: str = ""
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, v: str) -> str:
+        return v.upper().strip() if v else "UZS"
+
+
+class TransferIntent(LLMIntentBase):
+    """User wants to move money between their balance and savings, e.g.
+    "transfer 200,000 from balance to savings" or "move 500k from savings
+    to balance". Never a transaction against the outside world -- for that,
+    use set_balance instead."""
+
+    type: Literal["transfer"] = "transfer"
+    from_account: Literal["balance", "savings"] = "balance"
+    to_account: Literal["balance", "savings"] = "savings"
+    amount: float = Field(gt=0)
+    currency: str = "UZS"
+    note: str = ""
 
     @field_validator("currency")
     @classmethod
@@ -183,6 +211,7 @@ AnyIntent = (
     | IncomeIntent
     | QueryIntent
     | SetBalanceIntent
+    | TransferIntent
     | EditIntent
     | DeleteIntent
     | SearchIntent
@@ -196,6 +225,7 @@ INTENT_MODELS: dict[str, type[BaseModel]] = {
     "income": IncomeIntent,
     "query": QueryIntent,
     "set_balance": SetBalanceIntent,
+    "transfer": TransferIntent,
     "edit": EditIntent,
     "delete": DeleteIntent,
     "search": SearchIntent,

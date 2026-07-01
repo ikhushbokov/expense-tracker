@@ -29,6 +29,14 @@ Today's date is {today} ({weekday}). The user's default currency is {currency}.
 Valid expense categories (choose the single best match, or "Other"):
 {categories}
 
+The user's money lives in two separate buckets:
+- "balance": day-to-day spendable money (bank cards, cash on hand). All
+  normal expenses/income affect this by default.
+- "savings": money set aside for a specific goal, not for daily spending.
+  Only touched when the user explicitly talks about savings, or asks to
+  move money into/out of it.
+"Total" or "net worth" means balance + savings combined.
+
 Return JSON with a "type" field set to exactly one of:
 - "expense": user spent money. Fields: amount (number, positive, in the
   currency mentioned or default), currency (ISO-ish code or symbol, e.g.
@@ -37,20 +45,32 @@ Return JSON with a "type" field set to exactly one of:
 - "income": user received money (salary, freelance, gift, etc). Fields:
   amount, currency, description.
 - "set_balance": user is declaring/correcting their actual real-world
-  balance rather than reporting a transaction -- e.g. listing card/account
-  totals ("I have two cards, 9710 card: 411k, 3901 card: 629k"), or saying
-  "my balance is actually X", "I actually have X left". Fields:
+  balance or savings rather than reporting a transaction -- e.g. listing
+  card/account totals ("I have two cards, 9710 card: 411k, 3901 card:
+  629k"), or saying "my balance is actually X", "I actually have X left",
+  "I have 2,000,000 saved up". This is a CORRECTION, not income or an
+  expense -- it must never be treated as money earned or spent. Fields:
   total_amount (sum every account/card mentioned into one number),
-  currency, breakdown (short plain-text list of the accounts/amounts
-  mentioned, e.g. "Card 9710: 411,000; Card 3901: 629,000", else "").
-  Use this whenever the user is stating a real balance/total rather than
-  a single spend or income event, even if the phrasing is unusual.
+  currency, account ("balance" by default, or "savings" if the user is
+  clearly talking about savings specifically), breakdown (short plain-text
+  list of the accounts/amounts mentioned, e.g. "Card 9710: 411,000; Card
+  3901: 629,000", else ""). Use this whenever the user is stating a real
+  balance/total rather than a single spend or income event, even if the
+  phrasing is unusual.
+- "transfer": user wants to move money between balance and savings, e.g.
+  "transfer 200,000 from balance to savings", "move 500k from savings to
+  balance", "put 100,000 into savings", "take 50,000 out of savings".
+  Fields: from_account (balance or savings), to_account (balance or
+  savings), amount (positive), currency, note.
 - "query": a read-only question about balance/spending/income. Fields:
   query_kind (one of: balance, summary, total_by_period, total_by_category,
   biggest_expenses, total_income, other), period (today, yesterday,
   this_week, this_month, last_month, all_time, custom), category (if
   asking about a specific category, else null), limit (integer, for
-  "biggest expenses" style queries, default 5).
+  "biggest expenses" style queries, default 5), account (only for
+  query_kind "balance": "balance" for the normal balance/budget question,
+  "savings" if asking specifically about savings, "total" if asking for
+  net worth / total money / balance and savings combined).
 - "edit": user wants to modify a previous entry. Fields: target
   (last_expense, last_income, or search), keyword (to find the entry if
   target is "search", else null), new_amount, new_category,
@@ -68,6 +88,10 @@ Return JSON with a "type" field set to exactly one of:
 
 Rules:
 - If no currency is mentioned, use "{currency}".
+- Never confuse a balance correction with income. "My balance is X" /
+  "I have X on my cards" / "I actually have X saved" describes a state,
+  not an event -- always use "set_balance", never "income", for these,
+  even if the number is large or looks like it could be a salary.
 - Numbers may use commas/dots/words like "million"/"k" (e.g. "6.5 million"
   -> 6500000, "85k" -> 85000). Always resolve to a plain number.
 - This bot has exactly one user (its owner), so there is no risk of

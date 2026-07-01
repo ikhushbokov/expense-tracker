@@ -16,8 +16,10 @@ from expense_ai.handlers.commands import (
     handle_chart_command,
     handle_help,
     handle_month_command,
+    handle_savings_command,
     handle_start,
     handle_today_command,
+    handle_total_command,
     handle_week_command,
 )
 from expense_ai.handlers.photo import handle_photo
@@ -51,6 +53,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("week", handle_week_command))
     application.add_handler(CommandHandler("month", handle_month_command))
     application.add_handler(CommandHandler("budget", handle_budget_command))
+    application.add_handler(CommandHandler("savings", handle_savings_command))
+    application.add_handler(CommandHandler("total", handle_total_command))
     application.add_handler(CommandHandler("biggest", handle_biggest_command))
     application.add_handler(CommandHandler("chart", handle_chart_command))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))

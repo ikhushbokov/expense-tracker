@@ -11,7 +11,14 @@ from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
 
 from expense_ai.database import session_scope
-from expense_ai.finance import biggest_expenses, build_monthly_summary, format_amount, get_balances, render_summary
+from expense_ai.finance import (
+    biggest_expenses,
+    build_monthly_summary,
+    format_amount,
+    get_balances,
+    get_net_worth,
+    render_summary,
+)
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.reports import category_pie_chart
 
@@ -21,10 +28,13 @@ WELCOME_MESSAGE = (
     "• \"Spent 85,000 on groceries\"\n"
     "• \"Salary came today: 6,500,000\"\n"
     "• \"How much did I spend this month?\"\n"
-    "• \"Undo the last expense\"\n\n"
+    "• \"Undo the last expense\"\n"
+    "• \"Transfer 200,000 from balance to savings\"\n\n"
     "Or use the quick commands:\n"
     "/today, /week, /month — spending summaries\n"
     "/budget — current balance\n"
+    "/savings — money set aside for goals\n"
+    "/total — balance + savings combined\n"
     "/biggest — biggest expenses\n"
     "/chart — spending pie chart\n\n"
     "You can also send a photo of a receipt and I'll read it automatically.\n"
@@ -40,6 +50,8 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("week", "This week's spending summary"),
     BotCommand("month", "This month's spending summary"),
     BotCommand("budget", "Current balance"),
+    BotCommand("savings", "Money set aside for goals"),
+    BotCommand("total", "Balance + savings combined"),
     BotCommand("biggest", "Biggest expenses"),
     BotCommand("chart", "Spending pie chart (this month)"),
     BotCommand("help", "Show usage help"),
@@ -82,11 +94,33 @@ async def handle_month_command(update: Update, context: ContextTypes.DEFAULT_TYP
 @restrict_to_owner
 async def handle_budget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with session_scope() as session:
-        balances = get_balances(session)
+        balances = get_balances(session, account="balance")
     if not balances:
         text = "You have no recorded income or expenses yet."
     else:
         text = "\U0001F4B0 Current balance:\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
+    await update.effective_message.reply_text(text)
+
+
+@restrict_to_owner
+async def handle_savings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        balances = get_balances(session, account="savings")
+    if not balances:
+        text = "You have no savings recorded yet."
+    else:
+        text = "\U0001F416 Savings:\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
+    await update.effective_message.reply_text(text)
+
+
+@restrict_to_owner
+async def handle_total_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        balances = get_net_worth(session)
+    if not balances:
+        text = "You have no recorded balance or savings yet."
+    else:
+        text = "\U0001F9EE Total (balance + savings):\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
     await update.effective_message.reply_text(text)
 
 

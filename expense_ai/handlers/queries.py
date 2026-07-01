@@ -9,6 +9,7 @@ from expense_ai.finance import (
     category_breakdown,
     format_amount,
     get_balances,
+    get_net_worth,
     render_summary,
     total_expenses_by_currency,
     total_income_by_currency,
@@ -20,10 +21,18 @@ from expense_ai.periods import resolve_period
 def handle_query(intent: QueryIntent) -> str:
     with session_scope() as session:
         if intent.query_kind == "balance":
-            balances = get_balances(session)
+            if intent.account == "total":
+                balances = get_net_worth(session)
+                label, empty_msg = "Total (balance + savings)", "You have no recorded balance or savings yet."
+            elif intent.account == "savings":
+                balances = get_balances(session, account="savings")
+                label, empty_msg = "Savings", "You have no savings recorded yet."
+            else:
+                balances = get_balances(session, account="balance")
+                label, empty_msg = "Current balance", "You have no recorded income or expenses yet."
             if not balances:
-                return "You have no recorded income or expenses yet."
-            return "Current balance:\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
+                return empty_msg
+            return f"{label}:\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
 
         if intent.query_kind == "summary":
             summary = build_monthly_summary(session, period=intent.period)
