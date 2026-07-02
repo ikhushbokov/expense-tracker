@@ -10,24 +10,23 @@ from pathlib import Path
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.database.models import Expense, Transfer
-from expense_ai.finance import format_amount
+from expense_ai.finance import describe_transfer, format_amount
 from expense_ai.models.schemas import DeleteIntent, EditIntent, ExportIntent, SearchIntent
 from expense_ai.periods import resolve_period
 
-_ACCOUNT_LABELS = {"balance": "Balance", "savings": "Savings", None: "outside"}
 
-
-def _find_target_expense(session, intent: EditIntent | DeleteIntent) -> Expense | None:
-    if intent.target == "search" and intent.keyword:
-        matches = repository.list_expenses(session, keyword=intent.keyword)
-        return matches[0] if matches else None
+def _find_target_expense(session, intent: EditIntent) -> Expense | None:
+    if intent.target == "search":
+        start, end = resolve_period(intent.period)
+        matches = repository.list_expenses(
+            session, start=start, end=end, category=intent.category, keyword=intent.keyword
+        )
+        if matches:
+            return matches[0]
+        # Nothing matched -- this bot has exactly one user, so fall back to
+        # the most recent expense rather than refusing outright (they most
+        # likely just described it differently than it was stored).
     return repository.last_expense(session)
-
-
-def _describe_transfer(transfer: Transfer) -> str:
-    frm = _ACCOUNT_LABELS.get(transfer.from_account, transfer.from_account)
-    to = _ACCOUNT_LABELS.get(transfer.to_account, transfer.to_account)
-    return f"{format_amount(transfer.amount, transfer.currency)} ({frm} → {to}{f', ' + transfer.note if transfer.note else ''})"
 
 
 def _find_target_transfer(
@@ -51,14 +50,18 @@ def handle_edit(intent: EditIntent) -> str:
             income = repository.last_income(session)
             if income is None:
                 return "You don't have any income entries yet."
+            if intent.new_amount is None and intent.new_description is None:
+                return "Tell me what to change on the income entry — amount or description."
             before = format_amount(income.amount, income.currency)
-            fields: dict[str, object] = {}
-            if intent.new_amount is not None:
-                fields["amount"] = intent.new_amount
-            if intent.new_description is not None:
-                fields["description"] = intent.new_description
-            for key, value in fields.items():
-                setattr(income, key, value)
+            changed = False
+            if intent.new_amount is not None and intent.new_amount != income.amount:
+                income.amount = intent.new_amount
+                changed = True
+            if intent.new_description is not None and intent.new_description != income.description:
+                income.description = intent.new_description
+                changed = True
+            if not changed:
+                return f"That's already what I have: {before}."
             session.flush()
             return f"✏️ Updated income: {before} → {format_amount(income.amount, income.currency)}"
 
@@ -66,17 +69,32 @@ def handle_edit(intent: EditIntent) -> str:
             transfer = _find_target_transfer(session, amount=intent.match_amount, currency=intent.match_currency)
             if transfer is None:
                 return "You don't have any balance/savings adjustments or transfers yet."
-            before = _describe_transfer(transfer)
+            if intent.new_amount is None:
+                return "Tell me the corrected amount for that adjustment/transfer."
+            before = describe_transfer(transfer)
+            if intent.new_amount == transfer.amount:
+                return f"That's already what I have: {before}."
             updated = repository.update_transfer(session, transfer.id, amount=intent.new_amount)
             assert updated is not None
-            after = _describe_transfer(updated)
+            after = describe_transfer(updated)
             return f"✏️ Adjustment/transfer updated\nBefore: {before}\nAfter: {after}"
 
         expense = _find_target_expense(session, intent)
         if expense is None:
             return "I couldn't find a matching expense to edit."
 
+        if intent.new_amount is None and intent.new_category is None and intent.new_description is None:
+            return "Tell me what to change — amount, category, or description."
+
         before = f"{format_amount(expense.amount, expense.currency)} / {expense.category} / {expense.description or '-'}"
+        changed = (
+            (intent.new_amount is not None and intent.new_amount != expense.amount)
+            or (intent.new_category is not None and intent.new_category != expense.category)
+            or (intent.new_description is not None and intent.new_description != expense.description)
+        )
+        if not changed:
+            return f"That's already what I have: {before}."
+
         updated = repository.update_expense(
             session,
             expense.id,
@@ -103,7 +121,7 @@ def handle_delete(intent: DeleteIntent) -> str:
             transfer = _find_target_transfer(session, amount=intent.amount, currency=intent.currency)
             if transfer is None:
                 return "You don't have any balance/savings adjustments or transfers yet."
-            summary = _describe_transfer(transfer)
+            summary = describe_transfer(transfer)
             repository.delete_transfer(session, transfer.id)
             return f"\U0001F5D1 Deleted adjustment/transfer: {summary}"
 

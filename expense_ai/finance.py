@@ -21,9 +21,14 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from expense_ai.database import repository
+from expense_ai.database.models import Transfer
 from expense_ai.periods import resolve_period
 
 ACCOUNTS = ("balance", "savings")
+
+# "outside" (None) represents a correction against the real world (see
+# database/models.py:Transfer) rather than a move between the two buckets.
+ACCOUNT_LABELS = {"balance": "Balance", "savings": "Savings", None: "outside"}
 
 
 def format_amount(amount: float, currency: str) -> str:
@@ -33,6 +38,12 @@ def format_amount(amount: float, currency: str) -> str:
     else:
         number = f"{amount:,.2f}"
     return f"{number} {currency}"
+
+
+def describe_transfer(transfer: Transfer) -> str:
+    frm = ACCOUNT_LABELS.get(transfer.from_account, transfer.from_account)
+    to = ACCOUNT_LABELS.get(transfer.to_account, transfer.to_account)
+    return f"{format_amount(transfer.amount, transfer.currency)} ({frm} → {to}{f', ' + transfer.note if transfer.note else ''})"
 
 
 @dataclass

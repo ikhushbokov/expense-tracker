@@ -7,6 +7,8 @@ provider being reachable.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
 
@@ -20,6 +22,7 @@ from expense_ai.finance import (
     render_summary,
 )
 from expense_ai.handlers.common import restrict_to_owner
+from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.reports import category_pie_chart
 
 WELCOME_MESSAGE = (
@@ -36,7 +39,8 @@ WELCOME_MESSAGE = (
     "/savings — money set aside for goals\n"
     "/total — balance + savings combined\n"
     "/biggest — biggest expenses\n"
-    "/chart — spending pie chart\n\n"
+    "/chart — spending pie chart\n"
+    "/history — day-by-day transaction log (◀/▶ to page through days)\n\n"
     "You can also send a photo of a receipt and I'll read it automatically.\n"
     "Type /help any time to see this again."
 )
@@ -54,6 +58,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("total", "Balance + savings combined"),
     BotCommand("biggest", "Biggest expenses"),
     BotCommand("chart", "Spending pie chart (this month)"),
+    BotCommand("history", "Day-by-day transaction log"),
     BotCommand("help", "Show usage help"),
 ]
 
@@ -147,3 +152,17 @@ async def handle_chart_command(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         with path.open("rb") as f:
             await update.effective_message.reply_photo(photo=f)
+
+
+@restrict_to_owner
+async def handle_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    day = dt.date.today()
+    if context.args:
+        try:
+            day = dt.date.fromisoformat(context.args[0])
+        except ValueError:
+            await update.effective_message.reply_text("Use a date like /history 2026-06-15.")
+            return
+    with session_scope() as session:
+        text = render_day_text(session, day)
+    await update.effective_message.reply_text(text, reply_markup=day_keyboard(day))

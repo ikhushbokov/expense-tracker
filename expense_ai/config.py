@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # --- Currency -----------------------------------------------------
     default_currency: str = Field(default="UZS", alias="DEFAULT_CURRENCY")
 
+    # --- Timezone ---------------------------------------------------------
+    # IANA name (e.g. "Asia/Tashkent"). Every "today"/"this week" boundary,
+    # history-log date, and stored timestamp is computed in this timezone.
+    # Defaults to UTC -- important to set explicitly for Docker, since a
+    # container's system clock is UTC by default regardless of the host
+    # machine's timezone (see bot.py's use of this at startup).
+    timezone: str = Field(default="UTC", alias="TZ")
+
     # --- OCR ------------------------------------------------------------
     tesseract_cmd: str = Field(default="tesseract", alias="TESSERACT_CMD")
     ocr_languages: str = Field(default="eng", alias="OCR_LANGUAGES")

@@ -4,6 +4,7 @@
 __pycache__/
 *.pyc
 data/*.db
+data/*.bak*
 data/receipts/
 exports/*.csv
 exports/*.xlsx

@@ -33,6 +33,7 @@ def init_db() -> None:
     _add_column_if_missing("expenses", "account", "VARCHAR(32) DEFAULT 'balance' NOT NULL")
     _add_column_if_missing("income", "account", "VARCHAR(32) DEFAULT 'balance' NOT NULL")
     _migrate_legacy_balance_adjustments()
+    _migrate_legacy_coffee_category()
 
 
 def _add_column_if_missing(table: str, column: str, column_ddl: str) -> None:
@@ -91,6 +92,19 @@ def _migrate_legacy_balance_adjustments() -> None:
                 "Migrated %d legacy balance-adjustment row(s) into the transfers table",
                 len(stale_incomes) + len(stale_expenses),
             )
+
+
+def _migrate_legacy_coffee_category() -> None:
+    """Earlier versions auto-assigned a standalone "Coffee" category;
+    food/drink purchases (coffee included) are now all grouped under
+    "Food" instead, with the specific item left to the description.
+    Idempotent: once migrated, no "Coffee" rows remain to match again."""
+    with session_scope() as session:
+        stale = session.scalars(select(Expense).where(Expense.category == "Coffee")).all()
+        for expense in stale:
+            expense.category = "Food"
+        if stale:
+            logger.info("Migrated %d expense(s) from category 'Coffee' to 'Food'", len(stale))
 
 
 @contextmanager

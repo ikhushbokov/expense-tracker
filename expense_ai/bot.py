@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from expense_ai.config import settings
 from expense_ai.database import init_db
@@ -15,6 +17,7 @@ from expense_ai.handlers.commands import (
     handle_budget_command,
     handle_chart_command,
     handle_help,
+    handle_history_command,
     handle_month_command,
     handle_savings_command,
     handle_start,
@@ -22,6 +25,7 @@ from expense_ai.handlers.commands import (
     handle_total_command,
     handle_week_command,
 )
+from expense_ai.handlers.history import handle_history_callback
 from expense_ai.handlers.photo import handle_photo
 from expense_ai.handlers.retry import retry_pending_messages
 from expense_ai.handlers.text import handle_text
@@ -57,6 +61,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("total", handle_total_command))
     application.add_handler(CommandHandler("biggest", handle_biggest_command))
     application.add_handler(CommandHandler("chart", handle_chart_command))
+    application.add_handler(CommandHandler("history", handle_history_command))
+    application.add_handler(CallbackQueryHandler(handle_history_callback, pattern=r"^hist:"))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(handle_error)
@@ -71,8 +77,20 @@ def build_application() -> Application:
     return application
 
 
+def _apply_timezone() -> None:
+    """Make every ``dt.datetime.now()`` call across the app (storage,
+    /today-/week boundaries, history log dates, chart labels...) reflect
+    ``settings.timezone`` instead of the process's default system clock --
+    which, in Docker, is UTC regardless of the host machine's timezone."""
+    os.environ["TZ"] = settings.timezone
+    if hasattr(time, "tzset"):  # not available on Windows
+        time.tzset()
+    logger.info("Using timezone %s", settings.timezone)
+
+
 def main() -> None:
     setup_logging()
+    _apply_timezone()
     logger.info("Initializing database at %s", settings.database_full_path)
     init_db()
 

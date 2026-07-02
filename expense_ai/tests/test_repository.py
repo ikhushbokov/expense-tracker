@@ -5,6 +5,16 @@ from __future__ import annotations
 from expense_ai.database import repository, session_scope
 
 
+def test_add_expense_stores_naive_local_time_not_utc():
+    # Storage must stay naive/local -- periods.py, history.py, and parser.py
+    # all compute "now" as naive local time too. Mixing in an explicit UTC
+    # timestamp here previously caused every timestamp shown to the user to
+    # be off by their UTC offset (see CLAUDE.md's Timezone section).
+    with session_scope() as s:
+        expense = repository.add_expense(s, amount=1000, currency="UZS", category="Food")
+    assert expense.datetime.tzinfo is None
+
+
 def test_add_and_get_expense():
     with session_scope() as s:
         expense = repository.add_expense(s, amount=1000, currency="UZS", category="Food", description="Test")

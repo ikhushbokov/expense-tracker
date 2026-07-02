@@ -35,7 +35,7 @@ def add_expense(
         source=source,
         notes=notes,
         account=account,
-        datetime=when or dt.datetime.now(dt.timezone.utc),
+        datetime=when or dt.datetime.now(),
     )
     session.add(expense)
     session.flush()
@@ -56,7 +56,7 @@ def add_income(
         currency=currency,
         description=description,
         account=account,
-        datetime=when or dt.datetime.now(dt.timezone.utc),
+        datetime=when or dt.datetime.now(),
     )
     session.add(income)
     session.flush()
@@ -79,7 +79,7 @@ def add_transfer(
         amount=amount,
         currency=currency,
         note=note,
-        datetime=when or dt.datetime.now(dt.timezone.utc),
+        datetime=when or dt.datetime.now(),
     )
     session.add(transfer)
     session.flush()
@@ -226,7 +226,9 @@ def list_expenses(
         stmt = stmt.where(Expense.amount <= max_amount)
     if keyword is not None:
         like = f"%{keyword}%"
-        stmt = stmt.where(Expense.description.ilike(like) | Expense.notes.ilike(like))
+        stmt = stmt.where(
+            Expense.description.ilike(like) | Expense.notes.ilike(like) | Expense.category.ilike(like)
+        )
     if account is not None:
         stmt = stmt.where(Expense.account == account)
     stmt = stmt.order_by(Expense.datetime.desc())

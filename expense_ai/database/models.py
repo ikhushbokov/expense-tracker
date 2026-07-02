@@ -17,7 +17,7 @@ class Expense(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     datetime: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc), index=True
+        DateTime, default=lambda: dt.datetime.now(), index=True
     )
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -44,7 +44,7 @@ class Income(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     datetime: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc), index=True
+        DateTime, default=lambda: dt.datetime.now(), index=True
     )
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -71,7 +71,7 @@ class Transfer(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     datetime: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc), index=True
+        DateTime, default=lambda: dt.datetime.now(), index=True
     )
     from_account: Mapped[str | None] = mapped_column(String(32), nullable=True)
     to_account: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -95,7 +95,7 @@ class PendingMessage(Base):
     chat_id: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc), index=True
+        DateTime, default=lambda: dt.datetime.now(), index=True
     )
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 

@@ -23,7 +23,6 @@ CATEGORIES: list[str] = [
     "Education",
     "Bills",
     "Rent",
-    "Coffee",
     "Restaurants",
     "Electronics",
     "Subscriptions",
@@ -158,6 +157,11 @@ class EditIntent(LLMIntentBase):
     type: Literal["edit"] = "edit"
     target: Literal["last_expense", "last_income", "last_transfer", "search"] = "last_expense"
     keyword: str | None = None
+    # Only meaningful when target == "search" (see DeleteIntent.period/
+    # category, which this mirrors) -- narrows which expense is being
+    # renamed/recategorized/amount-corrected.
+    period: Literal["today", "yesterday", "this_week", "this_month", "all_time"] = "all_time"
+    category: str | None = None
     new_amount: float | None = None
     new_category: str | None = None
     new_description: str | None = None
@@ -221,6 +225,19 @@ class ChartIntent(LLMIntentBase):
     period: Literal["this_week", "this_month", "last_month", "all_time"] = "this_month"
 
 
+class HistoryIntent(LLMIntentBase):
+    """User wants an itemized day-by-day log of what happened (expenses,
+    income, transfers), not just totals -- e.g. "show me my history",
+    "what did I spend on July 1st", "let me see last week's transactions".
+    Distinct from query_kind="summary", which only gives category totals."""
+
+    type: Literal["history"] = "history"
+    period: Literal["today", "yesterday", "this_week", "this_month", "last_month"] = "today"
+    # Set when the user names an exact date (e.g. "July 1st"); takes
+    # precedence over ``period`` when present.
+    custom_date: dt.date | None = None
+
+
 class UnknownIntent(LLMIntentBase):
     type: Literal["unknown"] = "unknown"
     reason: str = ""
@@ -237,6 +254,7 @@ AnyIntent = (
     | SearchIntent
     | ExportIntent
     | ChartIntent
+    | HistoryIntent
     | UnknownIntent
 )
 
@@ -251,5 +269,6 @@ INTENT_MODELS: dict[str, type[BaseModel]] = {
     "search": SearchIntent,
     "chart": ChartIntent,
     "export": ExportIntent,
+    "history": HistoryIntent,
     "unknown": UnknownIntent,
 }

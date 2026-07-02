@@ -8,26 +8,30 @@ identically -- the only difference is whether the reply goes out via
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
 
-from telegram import Bot, Message
+from telegram import Bot, InlineKeyboardMarkup, Message
 
 from expense_ai.database import repository, session_scope
 from expense_ai.finance import format_amount, get_balances, reconcile_balance, transfer_funds
 from expense_ai.handlers.edit_search import handle_delete, handle_edit, handle_export, handle_search
 from expense_ai.handlers.queries import handle_query
+from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.models.schemas import (
     ChartIntent,
     DeleteIntent,
     EditIntent,
     ExportIntent,
+    HistoryIntent,
     QueryIntent,
     SearchIntent,
     SetBalanceIntent,
     TransferIntent,
 )
 from expense_ai.parser import parse_message
+from expense_ai.periods import resolve_period
 from expense_ai.reports import CHART_GENERATORS
 
 ACCOUNT_LABELS = {"balance": "Balance", "savings": "Savings"}
@@ -47,6 +51,7 @@ class BotResponse:
     photo_path: Path | None = None
     document_path: Path | None = None
     document_caption: str | None = None
+    reply_markup: InlineKeyboardMarkup | None = None
 
 
 async def build_response(text: str) -> BotResponse:
@@ -162,6 +167,17 @@ async def build_response(text: str) -> BotResponse:
             return BotResponse(text=caption)
         return BotResponse(document_path=file_path, document_caption=caption)
 
+    if intent.type == "history":
+        assert isinstance(intent, HistoryIntent)
+        if intent.custom_date is not None:
+            day = intent.custom_date
+        else:
+            start, _ = resolve_period(intent.period)
+            day = (start or dt.datetime.now()).date()
+        with session_scope() as session:
+            text = render_day_text(session, day)
+        return BotResponse(text=text, reply_markup=day_keyboard(day))
+
     if intent.type == "chart":
         assert isinstance(intent, ChartIntent)
         with session_scope() as session:
@@ -184,7 +200,7 @@ async def send_response_via_message(message: Message, response: BotResponse, *, 
                 document=f, filename=response.document_path.name, caption=prefix + (response.document_caption or "")
             )
     else:
-        await message.reply_text(prefix + (response.text or ""))
+        await message.reply_text(prefix + (response.text or ""), reply_markup=response.reply_markup)
 
 
 async def send_response_via_bot(bot: Bot, chat_id: int, response: BotResponse, *, prefix: str = "") -> None:
@@ -200,4 +216,4 @@ async def send_response_via_bot(bot: Bot, chat_id: int, response: BotResponse, *
                 caption=prefix + (response.document_caption or ""),
             )
     else:
-        await bot.send_message(chat_id=chat_id, text=prefix + (response.text or ""))
+        await bot.send_message(chat_id=chat_id, text=prefix + (response.text or ""), reply_markup=response.reply_markup)
