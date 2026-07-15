@@ -12,7 +12,7 @@ import datetime as dt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from expense_ai.database.models import Expense, Income, PendingMessage, Receipt, Transfer
+from expense_ai.database.models import Debt, Expense, Income, PendingMessage, Receipt, SavingsGoal, Transfer
 
 
 def add_expense(
@@ -136,6 +136,100 @@ def delete_transfer(session: Session, transfer_id: int) -> bool:
         return False
     session.delete(transfer)
     return True
+
+
+def add_debt(
+    session: Session,
+    *,
+    person: str,
+    amount: float,
+    currency: str,
+    direction: str,
+    note: str = "",
+    when: dt.datetime | None = None,
+) -> Debt:
+    debt = Debt(
+        person=person,
+        amount=amount,
+        currency=currency,
+        direction=direction,
+        note=note,
+        datetime=when or dt.datetime.now(),
+    )
+    session.add(debt)
+    session.flush()
+    return debt
+
+
+def list_debts(
+    session: Session,
+    *,
+    status: str | None = None,
+    keyword: str | None = None,
+    currency: str | None = None,
+) -> list[Debt]:
+    stmt = select(Debt)
+    if status is not None:
+        stmt = stmt.where(Debt.status == status)
+    if keyword is not None:
+        stmt = stmt.where(Debt.person.ilike(f"%{keyword}%"))
+    if currency is not None:
+        stmt = stmt.where(Debt.currency == currency)
+    stmt = stmt.order_by(Debt.datetime.desc())
+    return list(session.scalars(stmt).all())
+
+
+def last_debt(
+    session: Session, *, status: str | None = None, keyword: str | None = None, currency: str | None = None
+) -> Debt | None:
+    matches = list_debts(session, status=status, keyword=keyword, currency=currency)
+    return matches[0] if matches else None
+
+
+def get_debt(session: Session, debt_id: int) -> Debt | None:
+    return session.get(Debt, debt_id)
+
+
+def settle_debt(session: Session, debt_id: int, *, settled_amount: float | None = None) -> Debt | None:
+    debt = session.get(Debt, debt_id)
+    if debt is None:
+        return None
+    debt.status = "settled"
+    debt.settled_at = dt.datetime.now()
+    debt.settled_amount = settled_amount if settled_amount is not None else debt.amount
+    session.flush()
+    return debt
+
+
+def delete_debt(session: Session, debt_id: int) -> bool:
+    debt = session.get(Debt, debt_id)
+    if debt is None:
+        return False
+    session.delete(debt)
+    return True
+
+
+def upsert_savings_goal(
+    session: Session, *, name: str, target_amount: float, currency: str, target_date: dt.date | None = None
+) -> SavingsGoal:
+    goal = session.scalars(select(SavingsGoal).where(SavingsGoal.currency == currency)).first()
+    if goal is None:
+        goal = SavingsGoal(name=name, target_amount=target_amount, currency=currency, target_date=target_date)
+        session.add(goal)
+    else:
+        goal.name = name
+        goal.target_amount = target_amount
+        goal.target_date = target_date
+    session.flush()
+    return goal
+
+
+def get_savings_goal(session: Session, currency: str) -> SavingsGoal | None:
+    return session.scalars(select(SavingsGoal).where(SavingsGoal.currency == currency)).first()
+
+
+def list_savings_goals(session: Session) -> list[SavingsGoal]:
+    return list(session.scalars(select(SavingsGoal)).all())
 
 
 def attach_receipt(

@@ -57,6 +57,29 @@ any OpenAI-compatible endpoint).
   as income or spending.
 - **Transfers**: "Transfer 200,000 from balance to savings" moves money
   between the two buckets without affecting your total net worth.
+- **Lending & borrowing**: "Gave Aziz 300,000, he'll pay me back" /
+  "Borrowed 200k from Vali" records a loan (not an expense/income — it's
+  expected to be repaid). "Aziz paid me back" settles it. `/debts` lists
+  everything still open, with a tap-to-settle button per loan.
+- **Savings goals**: "I'm saving 10,000,000 for a laptop" sets a target;
+  `/savings` shows progress toward it (against your existing savings
+  balance — one active goal per currency).
+- **Month-over-month insights**: `/month` (and the month-end recap) call
+  out how this month's spending compares to last month, overall and by
+  category.
+- **No-spend streaks**: `/today` and the daily recap note how many days
+  it's been since your last expense.
+- **Proactive scheduled messages**: an evening spending recap, a month-end
+  summary with insights, and a monthly "does this balance still look
+  right?" nudge — sent to you without asking, no LLM cost. Times are
+  configurable (`DAILY_SUMMARY_HOUR`, `RECONCILIATION_HOUR`).
+- **Automatic DB backups**: a consistent copy of the SQLite database is
+  sent to you as a Telegram document on a schedule (`BACKUP_INTERVAL_HOURS`,
+  default 24h) — a free offsite backup of your entire financial history.
+- **Offline HTML dashboard**: `/dashboard` generates a self-contained
+  report (balances, category breakdown, 6-month trend, open loans, savings
+  goals) as a single HTML file you can open in any browser, no internet
+  connection needed.
 - **Resilient to LLM/network outages**: if the LLM is unreachable when you
   message the bot, it tells you plainly, saves your message to a durable
   queue, and automatically retries every `RETRY_QUEUE_INTERVAL_SECONDS`
@@ -84,22 +107,26 @@ expense_tracker/
 │   ├── reports.py               # matplotlib chart generation
 │   ├── history.py                # Day-by-day ledger (expenses/income/transfers)
 │   ├── income.py                  # Month-by-month income log
+│   ├── dashboard.py                # Self-contained offline HTML report generator
 │   ├── database/
 │   │   ├── __init__.py           # Engine/session management, init_db()
-│   │   ├── models.py              # SQLAlchemy ORM models
+│   │   ├── models.py              # SQLAlchemy ORM models (incl. Debt, SavingsGoal)
 │   │   └── repository.py          # All CRUD queries
 │   ├── models/
 │   │   └── schemas.py             # Pydantic schemas for LLM-structured intents
 │   ├── handlers/
 │   │   ├── common.py               # Owner-only access guard
-│   │   ├── commands.py              # /start, /help, /history, /income, quick commands
+│   │   ├── commands.py              # /start, /help, /history, /income, /debts, /dashboard, quick commands
 │   │   ├── text.py                   # Routes text messages by intent
 │   │   ├── photo.py                   # Receipt photo -> OCR -> expense
 │   │   ├── queries.py                  # Read-only Q&A (balance, summaries...)
 │   │   ├── edit_search.py               # Edit / delete / search / export
+│   │   ├── debts.py                      # Lend/borrow/settle + /debts settle-button callback
 │   │   ├── history.py                    # /history Prev/Next pagination callback
 │   │   ├── income.py                      # /income Prev/Next pagination callback
-│   │   └── summary.py                      # /month, /week Prev/Next pagination callback
+│   │   ├── summary.py                     # /month, /week Prev/Next pagination callback
+│   │   ├── scheduled.py                    # Proactive daily/month-end/reconciliation jobs
+│   │   └── backup.py                       # Periodic DB backup sent as a Telegram document
 │   └── tests/                    # pytest suite
 ├── data/                       # SQLite DB + downloaded receipt photos (gitignored)
 ├── exports/                    # Generated CSV/XLSX/JSON/PDF/PNG files (gitignored)
@@ -194,10 +221,12 @@ starts polling for Telegram messages.
 
 **Quick commands** (instant, bypass the LLM entirely — work even during an
 LLM outage): `/today`, `/week`, `/month` (spending summaries — `/week` and
-`/month` have ◀/▶ buttons to page through past weeks/months), `/income`
-(this month's income, with ◀/▶ to page past months), `/budget` (balance),
-`/savings`, `/total` (balance + savings), `/biggest`, `/chart`, `/history`
-(optionally `/history 2026-06-15` for a specific date).
+`/month` have ◀/▶ buttons to page through past weeks/months, and `/month`
+includes month-over-month insights), `/income` (this month's income, with
+◀/▶ to page past months), `/budget` (balance), `/savings` (includes savings
+goal progress if one is set), `/total` (balance + savings), `/debts` (open
+loans, tap to settle), `/biggest`, `/chart`, `/dashboard` (offline HTML
+report), `/history` (optionally `/history 2026-06-15` for a specific date).
 
 **Recording:**
 - "Spent 85,000 UZS on groceries."
@@ -241,6 +270,24 @@ LLM to classify it, and records the expense automatically.
 - "Transfer 200,000 from balance to savings."
 - "How much are my savings?"
 - "What's my total money?" / "What's my net worth?"
+
+**Lending & borrowing:**
+- "Gave Aziz 300,000, he'll pay me back next week." (lent — reduces balance)
+- "Borrowed 200k from Vali." (borrowed — increases balance)
+- "Aziz paid me back." / "I paid Vali back." (settles the loan)
+- "Delete the loan to Aziz." (undo one entered by mistake)
+- `/debts` — lists everything still open, with a tap-to-settle button per loan.
+
+**Savings goals:**
+- "I'm saving 10,000,000 for a laptop."
+- "My travel fund goal is 5 million by December."
+- `/savings` then shows progress toward the goal alongside your balance.
+
+**Proactive (no message needed):** an evening recap of the day, a month-end
+summary with month-over-month insights, a monthly "does this balance still
+look right?" nudge, and a periodic database backup sent as a document — all
+on a schedule (`DAILY_SUMMARY_HOUR`, `RECONCILIATION_HOUR`,
+`BACKUP_INTERVAL_HOURS` in `.env`).
 
 ---
 

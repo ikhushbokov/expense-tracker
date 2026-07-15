@@ -10,7 +10,7 @@ from pathlib import Path
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.database.models import Expense, Transfer
-from expense_ai.finance import describe_transfer, format_amount
+from expense_ai.finance import describe_debt, describe_transfer, format_amount
 from expense_ai.models.schemas import DeleteIntent, EditIntent, ExportIntent, SearchIntent
 from expense_ai.periods import resolve_period
 
@@ -124,6 +124,14 @@ def handle_delete(intent: DeleteIntent) -> str:
             summary = describe_transfer(transfer)
             repository.delete_transfer(session, transfer.id)
             return f"\U0001F5D1 Deleted adjustment/transfer: {summary}"
+
+        if intent.target == "last_debt":
+            debt = repository.last_debt(session, keyword=intent.keyword, currency=intent.currency)
+            if debt is None:
+                return "You don't have any loans recorded."
+            summary = describe_debt(debt)
+            repository.delete_debt(session, debt.id)
+            return f"\U0001F5D1 Deleted loan: {summary}"
 
         if intent.target == "last_expense":
             expense = repository.last_expense(session)

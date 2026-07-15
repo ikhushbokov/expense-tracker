@@ -15,19 +15,23 @@ from pathlib import Path
 from telegram import Bot, InlineKeyboardMarkup, Message
 
 from expense_ai.database import repository, session_scope
-from expense_ai.finance import format_amount, get_balances, reconcile_balance, transfer_funds
+from expense_ai.finance import format_amount, get_balances, reconcile_balance, savings_goal_progress, transfer_funds
+from expense_ai.handlers.debts import handle_debt, handle_settle_debt
 from expense_ai.handlers.edit_search import handle_delete, handle_edit, handle_export, handle_search
 from expense_ai.handlers.queries import handle_query
 from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.models.schemas import (
     ChartIntent,
+    DebtIntent,
     DeleteIntent,
     EditIntent,
     ExportIntent,
     HistoryIntent,
     QueryIntent,
+    SavingsGoalIntent,
     SearchIntent,
     SetBalanceIntent,
+    SettleDebtIntent,
     TransferIntent,
 )
 from expense_ai.parser import parse_message
@@ -141,6 +145,32 @@ async def build_response(text: str) -> BotResponse:
             f"from {ACCOUNT_LABELS[intent.from_account]} to {ACCOUNT_LABELS[intent.to_account]}\n\n"
             f"Balance: {format_amount(new_balances['balance'].get(intent.currency, 0.0), intent.currency)}\n"
             f"Savings: {format_amount(new_balances['savings'].get(intent.currency, 0.0), intent.currency)}"
+        )
+        return BotResponse(text=text_reply)
+
+    if intent.type == "debt":
+        assert isinstance(intent, DebtIntent)
+        return BotResponse(text=handle_debt(intent))
+
+    if intent.type == "settle_debt":
+        assert isinstance(intent, SettleDebtIntent)
+        return BotResponse(text=handle_settle_debt(intent))
+
+    if intent.type == "savings_goal":
+        assert isinstance(intent, SavingsGoalIntent)
+        with session_scope() as session:
+            goal = repository.upsert_savings_goal(
+                session,
+                name=intent.name,
+                target_amount=intent.target_amount,
+                currency=intent.currency,
+                target_date=intent.target_date,
+            )
+            current, pct = savings_goal_progress(session, target_amount=goal.target_amount, currency=goal.currency)
+        deadline = f" by {intent.target_date.strftime('%b %d, %Y')}" if intent.target_date else ""
+        text_reply = (
+            f"\U0001F3AF Goal set: {goal.name} — {format_amount(goal.target_amount, goal.currency)}{deadline}\n"
+            f"Currently saved: {format_amount(current, goal.currency)} ({pct:.0f}%)"
         )
         return BotResponse(text=text_reply)
 

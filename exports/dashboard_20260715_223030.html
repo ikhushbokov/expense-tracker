@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Expense Dashboard</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; background: #0f1115; color: #e7e9ee; margin: 0; padding: 24px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .generated { color: #8b8f9a; font-size: 13px; margin-bottom: 24px; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  .card { background: #1a1d24; border-radius: 10px; padding: 16px 20px; min-width: 180px; }
+  .card .label { color: #8b8f9a; font-size: 13px; }
+  .card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  h2 { font-size: 16px; border-bottom: 1px solid #2a2e38; padding-bottom: 8px; margin-top: 32px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  td, th { text-align: left; padding: 6px 8px; font-size: 14px; }
+  th { color: #8b8f9a; font-weight: 500; }
+  .bar-track { background: #2a2e38; border-radius: 4px; height: 10px; width: 100%; }
+  .bar-fill { background: #5b8cff; border-radius: 4px; height: 10px; }
+  .trend { display: flex; align-items: flex-end; gap: 10px; height: 140px; margin-top: 16px; }
+  .trend .col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; flex: 1; }
+  .trend .col-bar { background: #5b8cff; width: 100%; border-radius: 4px 4px 0 0; }
+  .trend .col-label { color: #8b8f9a; font-size: 11px; margin-top: 6px; }
+  .trend .col-value { font-size: 11px; margin-bottom: 4px; }
+  .empty { color: #8b8f9a; font-style: italic; }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<h1>📊 Expense Dashboard</h1>
+<div class="generated">Generated July 15, 2026</div>
+
+<div class="cards"><div class="card"><div class="label">Balance</div><div class="value">5,319,000 UZS</div></div><div class="card"><div class="label">Savings</div><div class="value">0 UZS</div></div><div class="card"><div class="label">Net worth</div><div class="value">5,319,000 UZS</div></div></div>
+
+<h2>July 2026 by category</h2>
+<table><tr><th>Category</th><th>Amount</th><th></th></tr><tr><td>Electronics</td><td>3,678,744 UZS (51%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div></td></tr><tr><td>Charity</td><td>950,000 UZS (13%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:26%"></div></div></td></tr><tr><td>Food</td><td>703,000 UZS (10%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:19%"></div></div></td></tr><tr><td>Gym</td><td>600,000 UZS (8%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:16%"></div></div></td></tr><tr><td>Other</td><td>475,000 UZS (7%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:13%"></div></div></td></tr><tr><td>Subscriptions</td><td>270,000 UZS (4%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:7%"></div></div></td></tr><tr><td>Transport</td><td>223,000 UZS (3%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:6%"></div></div></td></tr><tr><td>Shopping</td><td>120,000 UZS (2%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:3%"></div></div></td></tr><tr><td>Entertainment</td><td>104,000 UZS (1%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:3%"></div></div></td></tr><tr><td>Health</td><td>94,000 UZS (1%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:3%"></div></div></td></tr><tr><td>Family</td><td>50,000 UZS (1%)</td><td style="width:40%"><div class="bar-track"><div class="bar-fill" style="width:1%"></div></div></td></tr></table>
+
+<h2>Last 6 months spending</h2>
+<div class="trend"><div class="col"><div class="col-value">0</div><div class="col-bar" style="height:0%"></div><div class="col-label">Feb</div></div><div class="col"><div class="col-value">0</div><div class="col-bar" style="height:0%"></div><div class="col-label">Mar</div></div><div class="col"><div class="col-value">0</div><div class="col-bar" style="height:0%"></div><div class="col-label">Apr</div></div><div class="col"><div class="col-value">0</div><div class="col-bar" style="height:0%"></div><div class="col-label">May</div></div><div class="col"><div class="col-value">0</div><div class="col-bar" style="height:0%"></div><div class="col-label">Jun</div></div><div class="col"><div class="col-value">7,267,744</div><div class="col-bar" style="height:100%"></div><div class="col-label">Jul</div></div></div>
+
+<h2>Open loans</h2>
+<div class="cards"><div class="card"><div class="label">Owed to you</div><div class="value">—</div></div><div class="card"><div class="label">You owe</div><div class="value">—</div></div></div>
+
+<h2>Savings goals</h2>
+<p class="empty">No savings goals set.</p>
+
+</body></html>

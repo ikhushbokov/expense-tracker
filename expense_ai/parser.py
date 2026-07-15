@@ -74,6 +74,23 @@ Return JSON with a "type" field set to exactly one of:
   Do NOT use "transfer" just because a message mentions an account and an
   amount -- see the "delete"/"edit" note below for the "undo a mistake"
   case, which looks similar but means something different.
+- "debt": user lent money to another person (they owe the user) or
+  borrowed money from another person (the user owes them) -- e.g. "Gave
+  Aziz 300,000, he'll pay me back next week", "Borrowed 200k from Vali",
+  "I lent my brother 500,000". This is NOT an expense or income -- it's
+  expected to be repaid. Fields: person (name), amount (positive),
+  currency, direction ("lent" if the user gave money out and is owed it
+  back, "borrowed" if the user received money and owes it back), note.
+- "settle_debt": user is saying a loan was repaid -- either they got their
+  money back ("Aziz paid me back") or they paid back what they owed ("I
+  paid Vali back"). Fields: person (name, to find the right debt if there
+  are several), amount (only if the repayment amount differs from the
+  original, e.g. "paid me back 280,000 of the 300,000", else null),
+  currency (only if needed to disambiguate).
+- "savings_goal": user is setting or updating a savings target, e.g. "I'm
+  saving 10,000,000 for a laptop", "My travel fund goal is 5 million".
+  Fields: name (what it's for), target_amount (positive), currency,
+  target_date (if a deadline was mentioned, else null).
 - "query": a read-only question about balance/spending/income. Fields:
   query_kind (one of: balance, summary, total_by_period, total_by_category,
   biggest_expenses, total_income, other), period (today, yesterday,
@@ -110,9 +127,9 @@ Return JSON with a "type" field set to exactly one of:
   USD savings entry should be 500"), fill in match_amount/match_currency
   from that old value so the right entry is found among several.
 - "delete": user wants to remove/undo entries entirely -- including
-  undoing a balance/savings correction or transfer they didn't mean to
-  make. Fields: target (last_expense, last_income, last_transfer, or
-  search), keyword, period, category, amount, currency.
+  undoing a balance/savings correction, transfer, or loan they didn't mean
+  to make. Fields: target (last_expense, last_income, last_transfer,
+  last_debt, or search), keyword, period, category, amount, currency.
   IMPORTANT: "delete/remove/undo X from savings/balance" (with no second
   account named as a destination) means undo that correction/entry --
   use "delete" with target "last_transfer", NOT "transfer". Only use
@@ -123,6 +140,10 @@ Return JSON with a "type" field set to exactly one of:
   currency from what they said -- there may be more than one adjustment
   in different currencies, and these fields pick out the right one instead
   of just the most recent one overall.
+  Use target "last_debt" to undo a loan entered by mistake (e.g. "delete
+  the loan to Aziz", "undo that, I didn't actually borrow from Vali") --
+  fill in keyword with the person's name to pick the right one out of
+  several open debts.
 - "search": user wants to find/list past entries. Fields: keyword,
   min_amount, max_amount, period, category.
 - "export": user wants their data exported. Fields: format (csv, xlsx,

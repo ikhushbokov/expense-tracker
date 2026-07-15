@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     # How often (seconds) to retry messages queued while the LLM was down.
     retry_queue_interval_seconds: float = Field(default=60.0, alias="RETRY_QUEUE_INTERVAL_SECONDS")
 
+    # --- Scheduled jobs (handlers/scheduled.py, handlers/backup.py) -------
+    # Hour of day (0-23, in `timezone`) the daily recap and month-end summary
+    # are sent, and the hour the monthly reconciliation prompt goes out.
+    daily_summary_hour: int = Field(default=21, alias="DAILY_SUMMARY_HOUR")
+    reconciliation_hour: int = Field(default=9, alias="RECONCILIATION_HOUR")
+    # How often (hours) to send an automatic DB backup document to the owner.
+    backup_interval_hours: float = Field(default=24.0, alias="BACKUP_INTERVAL_HOURS")
+
     # --- Database ---------------------------------------------------------
     database_path: str = Field(default="data/expenses.db", alias="DATABASE_PATH")
 

@@ -44,6 +44,15 @@ balance logic.
   never income. A `transfer` intent is an intentional move between the two
   buckets. Don't conflate the two when adding features — a past bug did
   exactly that (deleting a savings entry silently became a transfer).
+- `Debt` rows (lending/borrowing money with another person) are a third,
+  separate ledger — not an Expense/Income (it's expected to be repaid, not
+  spent/earned) and not a Transfer (it involves someone else, not the
+  user's own two buckets). Always against `"balance"`, never `"savings"`.
+  `finance.get_balances` folds open+settled debts into the balance total
+  directly (see its docstring); `SavingsGoal` rows don't move money at
+  all — they're just a target compared against the existing `"savings"`
+  bucket total, one active goal per currency (no per-goal sub-partitioning
+  of savings).
 
 ### Resilience / outage queue
 
@@ -79,6 +88,45 @@ diverge from every other naive-local `dt.datetime.now()` call again.
 doesn't match `TELEGRAM_ALLOWED_USER_ID`. This is a single-user bot by
 design — see README's "Extending" section for what multi-user would
 require (not currently implemented).
+
+### Proactive scheduled jobs
+
+`handlers/scheduled.py` (daily recap, month-end summary, monthly
+reconciliation prompt) and `handlers/backup.py` (DB backup) aren't
+triggered by a user message at all — they're `job_queue.run_daily`/
+`run_monthly`/`run_repeating` jobs registered in `bot.py::build_application`,
+so each sends directly via `context.bot.send_message`/`send_document` to
+`settings.telegram_allowed_user_id` as the chat_id (valid because this is a
+private 1:1 bot — chat_id equals user_id there) rather than replying to an
+update. If `TELEGRAM_ALLOWED_USER_ID` isn't set, they log a warning and
+skip rather than raising, since there's nowhere to send the message.
+`run_daily`/`run_monthly` need an explicit `tzinfo` on the `time`/`when`
+argument (`zoneinfo.ZoneInfo(settings.timezone)`) or APScheduler defaults
+to UTC regardless of `_apply_timezone()`.
+
+### Settings is a singleton captured at import time — a testing gotcha
+
+Every module does `from expense_ai.config import settings`, which binds a
+*direct reference* to whatever object `expense_ai.config.settings` was at
+that module's own first import (during pytest collection, before any
+fixture runs). `tests/conftest.py::isolated_db` reassigns the
+`expense_ai.config.settings` *attribute* to a fresh test-specific
+`Settings()` instance, but that reassignment is invisible to modules that
+already hold the old direct reference — so mutating the module attribute
+alone does **not** isolate them. The fixture works around this by also
+patching fields directly on the original shared instance in place
+(`monkeypatch.setattr(original_settings, "database_path", ...)`) — and
+critically, it captures `original_settings = config_module.settings`
+*before* reassigning `config_module.settings`, otherwise it grabs the new
+object instead of the one everything else is bound to. This bit
+`handlers/backup.py::send_db_backup` specifically, since it opens
+`settings.database_path` via raw `sqlite3.connect` rather than going
+through `session_scope()`/the SQLAlchemy engine (which the fixture patches
+via `db_module.engine`/`SessionLocal`, sidestepping the singleton issue
+entirely) — a test that looked isolated was silently reading the real
+`data/expenses.db`. If you add a new field to `Settings` that a test needs
+to vary (a new API key, a new path, ...), add it to the "patch fields on
+`original_settings` too" block in `conftest.py`, not just the env var.
 
 ## Commands
 

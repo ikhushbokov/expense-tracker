@@ -12,6 +12,7 @@ import datetime as dt
 from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
 
+from expense_ai.dashboard import generate_dashboard_html
 from expense_ai.database import session_scope
 from expense_ai.finance import (
     biggest_expenses,
@@ -20,9 +21,13 @@ from expense_ai.finance import (
     format_amount,
     get_balances,
     get_net_worth,
+    month_over_month_insights,
+    no_spend_streak_days,
+    render_savings_goal_lines,
     render_summary,
 )
 from expense_ai.handlers.common import restrict_to_owner
+from expense_ai.handlers.debts import open_debts_keyboard, render_open_debts_text
 from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.income import render_month_income_text
 from expense_ai.keyboards import month_nav_keyboard, week_nav_keyboard
@@ -44,8 +49,10 @@ WELCOME_MESSAGE = (
     "/budget — current balance\n"
     "/savings — money set aside for goals\n"
     "/total — balance + savings combined\n"
+    "/debts — open loans (lent/borrowed), tap to settle\n"
     "/biggest — biggest expenses\n"
     "/chart — spending pie chart\n"
+    "/dashboard — offline HTML dashboard (balances, trends, loans, goals)\n"
     "/history — day-by-day transaction log (◀/▶ to page through days)\n\n"
     "You can also send a photo of a receipt and I'll read it automatically.\n"
     "Type /help any time to see this again."
@@ -63,8 +70,10 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("budget", "Current balance"),
     BotCommand("savings", "Money set aside for goals"),
     BotCommand("total", "Balance + savings combined"),
+    BotCommand("debts", "Open loans (lent/borrowed)"),
     BotCommand("biggest", "Biggest expenses"),
     BotCommand("chart", "Spending pie chart (this month)"),
+    BotCommand("dashboard", "Offline HTML dashboard"),
     BotCommand("history", "Day-by-day transaction log"),
     BotCommand("help", "Show usage help"),
 ]
@@ -86,7 +95,11 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def handle_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with session_scope() as session:
         summary = build_monthly_summary(session, period="today", label="Today")
-    await update.effective_message.reply_text(render_summary(summary))
+        streak = no_spend_streak_days(session)
+    text = render_summary(summary)
+    if streak > 0:
+        text += f"\n\n\U0001F525 {streak}-day no-spend streak!"
+    await update.effective_message.reply_text(text)
 
 
 @restrict_to_owner
@@ -106,8 +119,12 @@ async def handle_month_command(update: Update, context: ContextTypes.DEFAULT_TYP
     start, end = month_range(today.year, today.month)
     with session_scope() as session:
         summary = build_summary_for_range(session, start=start, end=end, label=today.strftime("%B %Y"))
+        insights = month_over_month_insights(session, year=today.year, month=today.month)
+    text = render_summary(summary)
+    if insights:
+        text += "\n\nCompared to last month\n" + "\n".join(insights)
     await update.effective_message.reply_text(
-        render_summary(summary), reply_markup=month_nav_keyboard("summary_month", today.year, today.month)
+        text, reply_markup=month_nav_keyboard("summary_month", today.year, today.month)
     )
 
 
@@ -136,10 +153,13 @@ async def handle_budget_command(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_savings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with session_scope() as session:
         balances = get_balances(session, account="savings")
+        goal_lines = render_savings_goal_lines(session)
     if not balances:
         text = "You have no savings recorded yet."
     else:
         text = "\U0001F416 Savings:\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
+    if goal_lines:
+        text += "\n\n" + "\n".join(goal_lines)
     await update.effective_message.reply_text(text)
 
 
@@ -177,6 +197,24 @@ async def handle_chart_command(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         with path.open("rb") as f:
             await update.effective_message.reply_photo(photo=f)
+
+
+@restrict_to_owner
+async def handle_dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        path = generate_dashboard_html(session)
+    with path.open("rb") as f:
+        await update.effective_message.reply_document(
+            document=f, filename=path.name, caption="\U0001F4CA Your expense dashboard — open in any browser."
+        )
+
+
+@restrict_to_owner
+async def handle_debts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    with session_scope() as session:
+        text = render_open_debts_text(session)
+        markup = open_debts_keyboard(session)
+    await update.effective_message.reply_text(text, reply_markup=markup)
 
 
 @restrict_to_owner
