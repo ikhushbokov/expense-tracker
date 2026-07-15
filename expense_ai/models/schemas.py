@@ -29,6 +29,7 @@ CATEGORIES: list[str] = [
     "Travel",
     "Family",
     "Gifts",
+    "Charity",
     "Other",
 ]
 

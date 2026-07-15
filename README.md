@@ -25,9 +25,12 @@ any OpenAI-compatible endpoint).
 - **Automatic categorization** into a fixed set of categories (Food,
   Transport, Gym, Supplements, Health, Entertainment, Shopping, Education,
   Bills, Rent, Restaurants, Electronics, Subscriptions, Travel, Family,
-  Gifts, Other). Anything edible/drinkable — meals, snacks, coffee, any
-  drink — is categorized "Food", with the specific item left in the
+  Gifts, Charity, Other). Anything edible/drinkable — meals, snacks, coffee,
+  any drink — is categorized "Food", with the specific item left in the
   description (e.g. "Cold drink") rather than split into its own category.
+  Donations (charity, mosque/church/temple, someone in need) are
+  categorized "Charity", separate from "Gifts" (presents/money for a
+  specific person you know).
 - **Running balance** (income − expenses), tracked per currency.
 - **Monthly/weekly/daily summaries** with category breakdowns and
   percentages.
@@ -76,9 +79,11 @@ expense_tracker/
 │   ├── parser.py               # LLM prompt + intent classification
 │   ├── finance.py              # Balance / summary / category math
 │   ├── periods.py               # "this_month" -> (start, end) resolution
+│   ├── keyboards.py               # Shared month/week ◀/▶ pagination keyboards
 │   ├── ocr.py                   # Tesseract receipt OCR
 │   ├── reports.py               # matplotlib chart generation
 │   ├── history.py                # Day-by-day ledger (expenses/income/transfers)
+│   ├── income.py                  # Month-by-month income log
 │   ├── database/
 │   │   ├── __init__.py           # Engine/session management, init_db()
 │   │   ├── models.py              # SQLAlchemy ORM models
@@ -87,12 +92,14 @@ expense_tracker/
 │   │   └── schemas.py             # Pydantic schemas for LLM-structured intents
 │   ├── handlers/
 │   │   ├── common.py               # Owner-only access guard
-│   │   ├── commands.py              # /start, /help, /history, quick commands
+│   │   ├── commands.py              # /start, /help, /history, /income, quick commands
 │   │   ├── text.py                   # Routes text messages by intent
 │   │   ├── photo.py                   # Receipt photo -> OCR -> expense
 │   │   ├── queries.py                  # Read-only Q&A (balance, summaries...)
 │   │   ├── edit_search.py               # Edit / delete / search / export
-│   │   └── history.py                    # /history Prev/Next pagination callback
+│   │   ├── history.py                    # /history Prev/Next pagination callback
+│   │   ├── income.py                      # /income Prev/Next pagination callback
+│   │   └── summary.py                      # /month, /week Prev/Next pagination callback
 │   └── tests/                    # pytest suite
 ├── data/                       # SQLite DB + downloaded receipt photos (gitignored)
 ├── exports/                    # Generated CSV/XLSX/JSON/PDF/PNG files (gitignored)
@@ -186,9 +193,11 @@ starts polling for Telegram messages.
 ## Usage examples
 
 **Quick commands** (instant, bypass the LLM entirely — work even during an
-LLM outage): `/today`, `/week`, `/month` (spending summaries), `/budget`
-(balance), `/savings`, `/total` (balance + savings), `/biggest`, `/chart`,
-`/history` (optionally `/history 2026-06-15` for a specific date).
+LLM outage): `/today`, `/week`, `/month` (spending summaries — `/week` and
+`/month` have ◀/▶ buttons to page through past weeks/months), `/income`
+(this month's income, with ◀/▶ to page past months), `/budget` (balance),
+`/savings`, `/total` (balance + savings), `/biggest`, `/chart`, `/history`
+(optionally `/history 2026-06-15` for a specific date).
 
 **Recording:**
 - "Spent 85,000 UZS on groceries."

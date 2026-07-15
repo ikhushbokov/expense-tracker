@@ -53,3 +53,27 @@ def resolve_period(
         return None, None
 
     return start, end
+
+
+def week_start(day: dt.date) -> dt.date:
+    """Monday of the week containing ``day``."""
+    return day - dt.timedelta(days=day.weekday())
+
+
+def month_range(year: int, month: int) -> tuple[dt.datetime, dt.datetime]:
+    """(start, end) bounds for one specific calendar month. ``end`` is exclusive."""
+    start = dt.datetime(year, month, 1)
+    last_day = calendar.monthrange(year, month)[1]
+    return start, start + dt.timedelta(days=last_day)
+
+
+def week_range(monday: dt.date) -> tuple[dt.datetime, dt.datetime]:
+    """(start, end) bounds for the 7-day week starting on ``monday``. ``end`` is exclusive."""
+    start = dt.datetime.combine(monday, dt.time.min)
+    return start, start + dt.timedelta(days=7)
+
+
+def shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    """Add ``delta`` months to (year, month), normalizing year/month overflow."""
+    index = year * 12 + (month - 1) + delta
+    return index // 12, index % 12 + 1

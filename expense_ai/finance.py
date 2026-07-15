@@ -188,15 +188,21 @@ def biggest_expenses(
     return sorted(expenses, key=lambda e: e.amount, reverse=True)[:limit]
 
 
-def build_monthly_summary(session: Session, *, period: str = "this_month", label: str | None = None) -> MonthlySummary:
-    start, end = resolve_period(period)
+def build_summary_for_range(
+    session: Session, *, start: dt.datetime | None, end: dt.datetime | None, label: str
+) -> MonthlySummary:
     return MonthlySummary(
-        period_label=label or period.replace("_", " ").title(),
+        period_label=label,
         income_by_currency=total_income_by_currency(session, start=start, end=end),
         expense_by_currency=total_expenses_by_currency(session, start=start, end=end),
         category_totals=category_breakdown(session, start=start, end=end),
         balance_by_currency=get_balances(session, account="balance"),
     )
+
+
+def build_monthly_summary(session: Session, *, period: str = "this_month", label: str | None = None) -> MonthlySummary:
+    start, end = resolve_period(period)
+    return build_summary_for_range(session, start=start, end=end, label=label or period.replace("_", " ").title())
 
 
 def render_summary(summary: MonthlySummary) -> str:

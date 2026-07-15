@@ -16,6 +16,7 @@ from expense_ai.database import session_scope
 from expense_ai.finance import (
     biggest_expenses,
     build_monthly_summary,
+    build_summary_for_range,
     format_amount,
     get_balances,
     get_net_worth,
@@ -23,6 +24,9 @@ from expense_ai.finance import (
 )
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.history import day_keyboard, render_day_text
+from expense_ai.income import render_month_income_text
+from expense_ai.keyboards import month_nav_keyboard, week_nav_keyboard
+from expense_ai.periods import month_range, week_range, week_start
 from expense_ai.reports import category_pie_chart
 
 WELCOME_MESSAGE = (
@@ -34,7 +38,9 @@ WELCOME_MESSAGE = (
     "• \"Undo the last expense\"\n"
     "• \"Transfer 200,000 from balance to savings\"\n\n"
     "Or use the quick commands:\n"
-    "/today, /week, /month — spending summaries\n"
+    "/today — today's spending summary\n"
+    "/week, /month — spending summaries (◀/▶ to page weeks/months)\n"
+    "/income — this month's income (◀/▶ to page months)\n"
     "/budget — current balance\n"
     "/savings — money set aside for goals\n"
     "/total — balance + savings combined\n"
@@ -53,6 +59,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("today", "Today's spending summary"),
     BotCommand("week", "This week's spending summary"),
     BotCommand("month", "This month's spending summary"),
+    BotCommand("income", "This month's income"),
     BotCommand("budget", "Current balance"),
     BotCommand("savings", "Money set aside for goals"),
     BotCommand("total", "Balance + savings combined"),
@@ -84,16 +91,34 @@ async def handle_today_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @restrict_to_owner
 async def handle_week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    monday = week_start(dt.date.today())
+    start, end = week_range(monday)
     with session_scope() as session:
-        summary = build_monthly_summary(session, period="this_week", label="This Week")
-    await update.effective_message.reply_text(render_summary(summary))
+        summary = build_summary_for_range(session, start=start, end=end, label=f"Week of {monday.strftime('%b %d, %Y')}")
+    await update.effective_message.reply_text(
+        render_summary(summary), reply_markup=week_nav_keyboard("summary_week", monday)
+    )
 
 
 @restrict_to_owner
 async def handle_month_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    today = dt.date.today()
+    start, end = month_range(today.year, today.month)
     with session_scope() as session:
-        summary = build_monthly_summary(session, period="this_month", label="This Month")
-    await update.effective_message.reply_text(render_summary(summary))
+        summary = build_summary_for_range(session, start=start, end=end, label=today.strftime("%B %Y"))
+    await update.effective_message.reply_text(
+        render_summary(summary), reply_markup=month_nav_keyboard("summary_month", today.year, today.month)
+    )
+
+
+@restrict_to_owner
+async def handle_income_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    today = dt.date.today()
+    with session_scope() as session:
+        text = render_month_income_text(session, today.year, today.month)
+    await update.effective_message.reply_text(
+        text, reply_markup=month_nav_keyboard("income", today.year, today.month)
+    )
 
 
 @restrict_to_owner

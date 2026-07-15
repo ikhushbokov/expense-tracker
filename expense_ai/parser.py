@@ -33,6 +33,10 @@ juice, water, any drink -- is category "Food", never a category of its
 own. Use the description field to note what it actually was (e.g.
 "Coffee", "Cold drink"); this doesn't change the category, it just keeps
 the entry recognizable to the user later.
+Money donated to charity, a mosque/church/temple, or given to someone in
+need (not a specific named person/occasion) is category "Charity", never
+"Gifts" or "Other". "Gifts" is only for presents/money given to a specific
+person you know (birthday, wedding, etc).
 
 The user's money lives in two separate buckets:
 - "balance": day-to-day spendable money (bank cards, cash on hand). All
