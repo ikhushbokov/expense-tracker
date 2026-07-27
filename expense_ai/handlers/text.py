@@ -32,6 +32,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not text:
         return
 
+    # Local import: balance_sync imports UNREACHABLE_MESSAGE from this
+    # module, so a top-level import back here would be circular.
+    from expense_ai.handlers.balance_sync import SYNC_PENDING_WINDOW_SECONDS, handle_missed_transaction_description
+
+    with session_scope() as session:
+        pending_missed = repository.pop_pending_missed_transaction(
+            session, chat_id=message.chat_id, max_age_seconds=SYNC_PENDING_WINDOW_SECONDS
+        )
+    if pending_missed is not None:
+        await handle_missed_transaction_description(
+            message, pending_missed.kind, pending_missed.amount, pending_missed.currency, text
+        )
+        return
+
     await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
 
     try:

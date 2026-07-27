@@ -123,6 +123,29 @@ class PendingSync(Base):
         return f"<PendingSync id={self.id} chat_id={self.chat_id}>"
 
 
+class PendingMissedTransaction(Base):
+    """Marker left when the "Log missed expense/income" sync button is
+    tapped (handlers/balance_sync.py), holding the amount/currency/kind
+    while the bot waits for the user to reply with what it was for. The
+    next plain-text message from that chat (handlers/text.py) consumes it
+    and becomes the description -- the amount itself is never re-derived
+    from that reply, only the category/description are."""
+
+    __tablename__ = "pending_missed_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # "expense" | "income"
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(), index=True
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<PendingMissedTransaction id={self.id} chat_id={self.chat_id} kind={self.kind} amount={self.amount}>"
+
+
 class Debt(Base):
     """Money lent to or borrowed from another person -- distinct from
     Expense/Income (it's not a spend or an earning, it's expected to be repaid)

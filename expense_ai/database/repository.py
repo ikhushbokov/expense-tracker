@@ -8,11 +8,22 @@ storage details stay isolated.
 from __future__ import annotations
 
 import datetime as dt
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from expense_ai.database.models import Debt, Expense, Income, PendingMessage, PendingSync, Receipt, SavingsGoal, Transfer
+from expense_ai.database.models import (
+    Debt,
+    Expense,
+    Income,
+    PendingMessage,
+    PendingMissedTransaction,
+    PendingSync,
+    Receipt,
+    SavingsGoal,
+    Transfer,
+)
 
 
 def add_expense(
@@ -393,3 +404,36 @@ def pop_pending_sync(session: Session, *, chat_id: int, max_age_seconds: int) ->
         return False
     newest = max(item.created_at for item in pending)
     return (dt.datetime.now() - newest).total_seconds() <= max_age_seconds
+
+
+class PendingMissed(NamedTuple):
+    kind: str
+    amount: float
+    currency: str
+
+
+def mark_pending_missed_transaction(session: Session, *, chat_id: int, kind: str, amount: float, currency: str) -> None:
+    """Arm the "next text message is the description for this missed
+    expense/income" marker, replacing any earlier one for the same chat."""
+    for existing in session.scalars(
+        select(PendingMissedTransaction).where(PendingMissedTransaction.chat_id == chat_id)
+    ).all():
+        session.delete(existing)
+    session.add(PendingMissedTransaction(chat_id=chat_id, kind=kind, amount=amount, currency=currency))
+
+
+def pop_pending_missed_transaction(session: Session, *, chat_id: int, max_age_seconds: int) -> PendingMissed | None:
+    """Consume (delete) the pending missed-transaction marker for
+    ``chat_id`` if one exists, regardless of age. Returns its data if it
+    was still fresh enough to act on, else None."""
+    pending = list(
+        session.scalars(select(PendingMissedTransaction).where(PendingMissedTransaction.chat_id == chat_id)).all()
+    )
+    for item in pending:
+        session.delete(item)
+    if not pending:
+        return None
+    newest = max(pending, key=lambda item: item.created_at)
+    if (dt.datetime.now() - newest.created_at).total_seconds() > max_age_seconds:
+        return None
+    return PendingMissed(kind=newest.kind, amount=newest.amount, currency=newest.currency)

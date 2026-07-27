@@ -15,8 +15,13 @@ treatment -- (a) as a Transfer correction that never shows up as income
 or spending, (b) as a real dated Expense/Income so it shows up in
 category totals and monthly summaries. So handle_sync_photo asks via two
 buttons instead of guessing; the callback data carries the amount/currency
-directly (nothing is written to the DB, and there's no per-user session
-state to lose, until the user actually taps one).
+directly, so nothing is written to the DB until the user actually taps
+one. Tapping "log missed expense/income" still doesn't write immediately
+either -- it arms a PendingMissedTransaction marker and asks what it was
+for; handlers/text.py:handle_text checks for that marker before its
+normal flow and, if present, treats the reply as the description (see
+handle_missed_transaction_description below) rather than re-parsing it
+as a brand new message.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 from expense_ai.database import repository, session_scope
@@ -39,8 +44,10 @@ from expense_ai.parser import parse_message
 
 logger = logging.getLogger(__name__)
 
-# How long after /sync the next photo is still assumed to be the screenshot
-# it asked for (see handlers/photo.py, which consumes the marker either way).
+# How long a pending marker (the next photo after /sync, or the next text
+# reply describing a missed expense/income) stays valid before being
+# treated as stale -- see handlers/photo.py and handlers/text.py, which
+# consume the marker either way once that message arrives.
 SYNC_PENDING_WINDOW_SECONDS = 600
 
 
@@ -179,33 +186,54 @@ async def handle_sync_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"({verb} an adjustment of {format_amount(abs(delta), currency)})\n"
                 "(This is a correction, not counted as income or spending.)"
             )
-    elif action == "expense":
+    elif action in ("expense", "income"):
+        chat_id = query.message.chat_id if query.message is not None else update.effective_chat.id
         with session_scope() as session:
-            repository.add_expense(
-                session,
-                amount=amount,
-                currency=currency,
-                category="Other",
-                description="Missed expense (found via cards sync)",
-            )
-            session.flush()
-            balance = get_balances(session, account="balance").get(currency, 0.0)
-        text = (
-            f"\U0001F4DD Logged missed expense: {format_amount(amount, currency)} (Other)\n\n"
-            f"Current balance: {format_amount(balance, currency)}"
-        )
-    elif action == "income":
-        with session_scope() as session:
-            repository.add_income(
-                session, amount=amount, currency=currency, description="Missed income (found via cards sync)"
-            )
-            session.flush()
-            balance = get_balances(session, account="balance").get(currency, 0.0)
-        text = (
-            f"\U0001F4B0 Logged missed income: {format_amount(amount, currency)}\n\n"
-            f"Current balance: {format_amount(balance, currency)}"
-        )
+            repository.mark_pending_missed_transaction(session, chat_id=chat_id, kind=action, amount=amount, currency=currency)
+        text = f"\U0001F4DD What was this {format_amount(amount, currency)} for? Reply with a short description."
     else:
         return
 
     await query.edit_message_text(text)
+
+
+async def handle_missed_transaction_description(message: Message, kind: str, amount: float, currency: str, description: str) -> None:
+    """Consumes the user's reply to "What was this ... for?" (see the
+    "expense"/"income" branch of handle_sync_callback above) and logs the
+    amount decided at sync time -- never re-derived from this reply --
+    with a category best-effort guessed from the description via the same
+    LLM path as a normal typed expense, falling back to "Other" if that
+    fails."""
+    category = "Other"
+    final_description = description
+    try:
+        intent = await parse_message(f"Log a {kind} of exactly {amount} {currency} for: {description}")
+        if kind == "expense" and intent.type == "expense":
+            category = intent.category
+            final_description = intent.description or description
+        elif kind == "income" and intent.type == "income":
+            final_description = intent.description or description
+    except LLMError as exc:
+        logger.warning("LLM unreachable while categorizing missed %s, falling back to 'Other': %s", kind, exc)
+
+    with session_scope() as session:
+        if kind == "expense":
+            repository.add_expense(
+                session, amount=amount, currency=currency, category=category, description=final_description
+            )
+        else:
+            repository.add_income(session, amount=amount, currency=currency, description=final_description)
+        session.flush()
+        balance = get_balances(session, account="balance").get(currency, 0.0)
+
+    if kind == "expense":
+        text = (
+            f"\U0001F4DD Logged missed expense: {format_amount(amount, currency)} ({category}) — {final_description}\n\n"
+            f"Current balance: {format_amount(balance, currency)}"
+        )
+    else:
+        text = (
+            f"\U0001F4B0 Logged missed income: {format_amount(amount, currency)} — {final_description}\n\n"
+            f"Current balance: {format_amount(balance, currency)}"
+        )
+    await message.reply_text(text)
