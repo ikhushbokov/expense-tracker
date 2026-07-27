@@ -1,4 +1,8 @@
-"""Handles receipt photos: OCR -> LLM categorization -> stored expense."""
+"""Handles receipt photos: OCR -> LLM categorization -> stored expense.
+
+Balance-sync screenshots (caption "sync") are routed to
+handlers/balance_sync.py instead -- see is_sync_photo().
+"""
 
 from __future__ import annotations
 
@@ -11,10 +15,11 @@ from telegram.ext import ContextTypes
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.finance import format_amount, get_balances
+from expense_ai.handlers.balance_sync import handle_sync_photo, is_sync_photo
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.text import UNREACHABLE_MESSAGE
 from expense_ai.llm import LLMError
-from expense_ai.ocr import extract_receipt_text
+from expense_ai.ocr import extract_image_text
 from expense_ai.parser import parse_message
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is None or not message.photo:
         return
 
+    if is_sync_photo(message.caption):
+        await handle_sync_photo(update, context)
+        return
+
     await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
 
     RECEIPTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,7 +46,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await file.download_to_drive(custom_path=str(image_path))
 
     try:
-        raw_text = extract_receipt_text(image_path)
+        raw_text = extract_image_text(image_path)
     except Exception as exc:
         logger.error("OCR failed for %s: %s", image_path, exc)
         await message.reply_text(

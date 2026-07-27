@@ -53,8 +53,10 @@ WELCOME_MESSAGE = (
     "/biggest — biggest expenses\n"
     "/chart — spending pie chart\n"
     "/dashboard — offline HTML dashboard (balances, trends, loans, goals)\n"
-    "/history — day-by-day transaction log (◀/▶ to page through days)\n\n"
-    "You can also send a photo of a receipt and I'll read it automatically.\n"
+    "/history — day-by-day transaction log (◀/▶ to page through days)\n"
+    "/sync — sync tracked balance from a cards/accounts screenshot\n\n"
+    "You can also send a photo of a receipt and I'll read it automatically, "
+    "or a screenshot of your cards/accounts captioned \"sync\" to reconcile your balance.\n"
     "Type /help any time to see this again."
 )
 
@@ -75,6 +77,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("chart", "Spending pie chart (this month)"),
     BotCommand("dashboard", "Offline HTML dashboard"),
     BotCommand("history", "Day-by-day transaction log"),
+    BotCommand("sync", "Sync tracked balance from a cards screenshot"),
     BotCommand("help", "Show usage help"),
 ]
 

@@ -31,6 +31,7 @@ from expense_ai.handlers.commands import (
     handle_total_command,
     handle_week_command,
 )
+from expense_ai.handlers.balance_sync import handle_sync_callback, handle_sync_command
 from expense_ai.handlers.debts import handle_debt_settle_callback
 from expense_ai.handlers.history import handle_history_callback
 from expense_ai.handlers.income import handle_income_callback
@@ -75,11 +76,13 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("dashboard", handle_dashboard_command))
     application.add_handler(CommandHandler("history", handle_history_command))
     application.add_handler(CommandHandler("income", handle_income_command))
+    application.add_handler(CommandHandler("sync", handle_sync_command))
     application.add_handler(CallbackQueryHandler(handle_history_callback, pattern=r"^hist:"))
     application.add_handler(CallbackQueryHandler(handle_income_callback, pattern=r"^income:"))
     application.add_handler(CallbackQueryHandler(handle_month_summary_callback, pattern=r"^summary_month:"))
     application.add_handler(CallbackQueryHandler(handle_week_summary_callback, pattern=r"^summary_week:"))
     application.add_handler(CallbackQueryHandler(handle_debt_settle_callback, pattern=r"^debt_settle:"))
+    application.add_handler(CallbackQueryHandler(handle_sync_callback, pattern=r"^sync:"))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(handle_error)
