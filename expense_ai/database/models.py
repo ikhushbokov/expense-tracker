@@ -103,6 +103,26 @@ class PendingMessage(Base):
         return f"<PendingMessage id={self.id} chat_id={self.chat_id} text={self.text!r}>"
 
 
+class PendingSync(Base):
+    """Marker left by /sync (handlers/balance_sync.py) so the *next* photo
+    from that chat is treated as a balance-sync screenshot even without a
+    "sync" caption -- consumed (deleted) by the first photo that arrives,
+    stale or not; handlers/photo.py only actually routes to the sync flow
+    if it was still fresh when consumed. DB-backed rather than in-memory
+    so it isn't lost if the bot restarts between the command and the photo."""
+
+    __tablename__ = "pending_syncs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=lambda: dt.datetime.now(), index=True
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<PendingSync id={self.id} chat_id={self.chat_id}>"
+
+
 class Debt(Base):
     """Money lent to or borrowed from another person -- distinct from
     Expense/Income (it's not a spend or an earning, it's expected to be repaid)

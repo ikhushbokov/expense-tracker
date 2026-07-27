@@ -1,7 +1,10 @@
 """Handles receipt photos: OCR -> LLM categorization -> stored expense.
 
-Balance-sync screenshots (caption "sync") are routed to
-handlers/balance_sync.py instead -- see is_sync_photo().
+Balance-sync screenshots are routed to handlers/balance_sync.py instead --
+either because the photo is captioned "sync" (is_sync_photo()), or because
+/sync armed a "the next photo is the screenshot" marker for this chat
+(pop_pending_sync(), consumed here either way so a later, unrelated photo
+doesn't get mistaken for one).
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from telegram.ext import ContextTypes
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.finance import format_amount, get_balances
-from expense_ai.handlers.balance_sync import handle_sync_photo, is_sync_photo
+from expense_ai.handlers.balance_sync import SYNC_PENDING_WINDOW_SECONDS, handle_sync_photo, is_sync_photo
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.text import UNREACHABLE_MESSAGE
 from expense_ai.llm import LLMError
@@ -33,7 +36,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if message is None or not message.photo:
         return
 
-    if is_sync_photo(message.caption):
+    with session_scope() as session:
+        pending_sync = repository.pop_pending_sync(
+            session, chat_id=message.chat_id, max_age_seconds=SYNC_PENDING_WINDOW_SECONDS
+        )
+    if is_sync_photo(message.caption) or pending_sync:
         await handle_sync_photo(update, context)
         return
 

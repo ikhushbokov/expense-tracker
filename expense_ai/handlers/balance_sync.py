@@ -39,6 +39,10 @@ from expense_ai.parser import parse_message
 
 logger = logging.getLogger(__name__)
 
+# How long after /sync the next photo is still assumed to be the screenshot
+# it asked for (see handlers/photo.py, which consumes the marker either way).
+SYNC_PENDING_WINDOW_SECONDS = 600
+
 
 def is_sync_photo(caption: str | None) -> bool:
     """True if a photo's caption asks for a balance sync rather than a receipt scan."""
@@ -52,11 +56,13 @@ async def handle_sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     with session_scope() as session:
         balances = get_balances(session, account="balance")
+        repository.mark_pending_sync(session, chat_id=message.chat_id)
     tracked = ", ".join(format_amount(v, c) for c, v in balances.items()) if balances else "nothing recorded yet"
     await message.reply_text(
         "\U0001F4B3 Tracked balance: " + tracked + "\n\n"
-        "Send a screenshot of your cards/accounts total with the caption \"sync\" "
-        "and I'll update the tracked balance to match (summed across all cards)."
+        "Send a screenshot of your cards/accounts total in the next 10 minutes and I'll compare it "
+        "to the tracked balance (summed across all cards) -- no caption needed. You can also caption "
+        "any photo \"sync\" to trigger this without the command."
     )
 
 

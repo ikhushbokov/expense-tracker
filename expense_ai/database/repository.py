@@ -12,7 +12,7 @@ import datetime as dt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from expense_ai.database.models import Debt, Expense, Income, PendingMessage, Receipt, SavingsGoal, Transfer
+from expense_ai.database.models import Debt, Expense, Income, PendingMessage, PendingSync, Receipt, SavingsGoal, Transfer
 
 
 def add_expense(
@@ -372,3 +372,24 @@ def delete_pending_message(session: Session, pending_id: int) -> bool:
         return False
     session.delete(pending)
     return True
+
+
+def mark_pending_sync(session: Session, *, chat_id: int) -> None:
+    """Arm the "next photo is a balance sync" marker for a chat, replacing
+    any earlier one (there's only ever one meaningful marker per chat)."""
+    for existing in session.scalars(select(PendingSync).where(PendingSync.chat_id == chat_id)).all():
+        session.delete(existing)
+    session.add(PendingSync(chat_id=chat_id))
+
+
+def pop_pending_sync(session: Session, *, chat_id: int, max_age_seconds: int) -> bool:
+    """Consume (delete) the pending-sync marker for ``chat_id`` if one
+    exists, regardless of age. Returns whether it was still fresh enough
+    to act on."""
+    pending = list(session.scalars(select(PendingSync).where(PendingSync.chat_id == chat_id)).all())
+    for item in pending:
+        session.delete(item)
+    if not pending:
+        return False
+    newest = max(item.created_at for item in pending)
+    return (dt.datetime.now() - newest).total_seconds() <= max_age_seconds
