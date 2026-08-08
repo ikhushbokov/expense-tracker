@@ -87,20 +87,27 @@ class PendingMessage(Base):
     """A text message that couldn't be processed because the LLM was
     unreachable. Retried automatically once the LLM is back (see
     handlers/retry.py); the user gets the normal confirmation reply then,
-    just delayed."""
+    just delayed.
+
+    ``kind`` tells the retry job which path to replay it through: "text"
+    (default) goes through the normal build_response() flow, while
+    "balance_sync" goes through balance_sync.build_sync_mismatch_response()
+    instead, so a delayed cards-screenshot sync still asks via buttons
+    rather than dispatch.py auto-applying whatever the LLM says."""
 
     __tablename__ = "pending_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     chat_id: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), default="text")
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=lambda: dt.datetime.now(), index=True
     )
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<PendingMessage id={self.id} chat_id={self.chat_id} text={self.text!r}>"
+        return f"<PendingMessage id={self.id} chat_id={self.chat_id} kind={self.kind} text={self.text!r}>"
 
 
 class PendingSync(Base):

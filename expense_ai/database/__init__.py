@@ -32,6 +32,7 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     _add_column_if_missing("expenses", "account", "VARCHAR(32) DEFAULT 'balance' NOT NULL")
     _add_column_if_missing("income", "account", "VARCHAR(32) DEFAULT 'balance' NOT NULL")
+    _add_column_if_missing("pending_messages", "kind", "VARCHAR(16) DEFAULT 'text' NOT NULL")
     _migrate_legacy_balance_adjustments()
     _migrate_legacy_coffee_category()
 

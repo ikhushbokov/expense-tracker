@@ -22,6 +22,18 @@ for; handlers/text.py:handle_text checks for that marker before its
 normal flow and, if present, treats the reply as the description (see
 handle_missed_transaction_description below) rather than re-parsing it
 as a brand new message.
+
+If the LLM is unreachable when the screenshot is first processed, the
+sync_prompt gets queued (kind="balance_sync", see repository.py) same as
+any other message -- but handlers/retry.py must NOT replay it through
+the generic build_response() path, since that would run set_balance
+through dispatch.py's unconditional reconcile_balance() and apply
+whatever the LLM says with no chance to confirm (this happened once in
+production with a wrong LLM-computed total). build_sync_mismatch_response()
+below is the shared "OCR text -> parse -> compute mismatch -> (text,
+markup)" step both handle_sync_photo and retry.py call, so the confirm
+buttons show up either way -- only *how* the result gets sent differs
+(message.reply_text vs. bot.send_message on a delay).
 """
 
 from __future__ import annotations
@@ -73,6 +85,58 @@ async def handle_sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+async def build_sync_mismatch_response(sync_prompt: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Parse an OCR'd cards-screenshot prompt and build the reply: either
+    the "already in sync" text (no buttons) or the mismatch text with the
+    "sync anyway" / "log missed expense or income" buttons. Shared by the
+    live path (handle_sync_photo) and the retry-queue path (handlers/retry.py)
+    so a delayed reply still asks instead of auto-applying. Raises LLMError
+    if the LLM is unreachable -- callers decide what to do about that."""
+    intent = await parse_message(sync_prompt)
+
+    if intent.type != "set_balance":
+        return "I read the screenshot but couldn't confidently total a balance from it.", None
+
+    with session_scope() as session:
+        current = get_balances(session, account="balance").get(intent.currency, 0.0)
+    delta = round(intent.total_amount - current, 2)
+
+    if delta == 0:
+        return (
+            "✅ Already in sync — tracked balance matches your cards: "
+            f"{format_amount(intent.total_amount, intent.currency)}.",
+            None,
+        )
+
+    missing = delta < 0  # tracked balance is higher than reality -> likely an unlogged expense
+    kind = "expense" if missing else "income"
+    text = (
+        "⚠️ Balance mismatch\n\n"
+        f"Tracked: {format_amount(current, intent.currency)}\n"
+        f"From your cards: {format_amount(intent.total_amount, intent.currency)}\n"
+        f"Difference: {format_amount(abs(delta), intent.currency)} ({'missing' if missing else 'extra'})\n\n"
+        f"Sync anyway (an unexplained correction, not counted as income/spending), or log the "
+        f"difference as a missed {kind} instead?"
+    )
+    markup = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    f"✅ Sync anyway ({format_amount(intent.total_amount, intent.currency)})",
+                    callback_data=f"sync:apply:{intent.total_amount:.2f}:{intent.currency}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"\U0001F4DD Log missed {kind} ({format_amount(abs(delta), intent.currency)})",
+                    callback_data=f"sync:{kind}:{abs(delta):.2f}:{intent.currency}",
+                )
+            ],
+        ]
+    )
+    return text, markup
+
+
 @restrict_to_owner
 async def handle_sync_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
@@ -107,58 +171,14 @@ async def handle_sync_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         + raw_text
     )
     try:
-        intent = await parse_message(sync_prompt)
+        text, markup = await build_sync_mismatch_response(sync_prompt)
     except LLMError as exc:
         logger.warning("LLM unreachable, queuing balance-sync text: %s", exc)
         with session_scope() as session:
-            repository.enqueue_pending_message(session, chat_id=message.chat_id, text=sync_prompt)
+            repository.enqueue_pending_message(session, chat_id=message.chat_id, text=sync_prompt, kind="balance_sync")
         await message.reply_text(UNREACHABLE_MESSAGE)
         return
 
-    if intent.type != "set_balance":
-        await message.reply_text(
-            "I read the screenshot but couldn't confidently total a balance from it. "
-            "Raw text:\n\n" + raw_text[:500]
-        )
-        return
-
-    with session_scope() as session:
-        current = get_balances(session, account="balance").get(intent.currency, 0.0)
-    delta = round(intent.total_amount - current, 2)
-
-    if delta == 0:
-        await message.reply_text(
-            "✅ Already in sync — tracked balance matches your cards: "
-            f"{format_amount(intent.total_amount, intent.currency)}."
-        )
-        return
-
-    missing = delta < 0  # tracked balance is higher than reality -> likely an unlogged expense
-    kind = "expense" if missing else "income"
-    text = (
-        "⚠️ Balance mismatch\n\n"
-        f"Tracked: {format_amount(current, intent.currency)}\n"
-        f"From your cards: {format_amount(intent.total_amount, intent.currency)}\n"
-        f"Difference: {format_amount(abs(delta), intent.currency)} ({'missing' if missing else 'extra'})\n\n"
-        f"Sync anyway (an unexplained correction, not counted as income/spending), or log the "
-        f"difference as a missed {kind} instead?"
-    )
-    markup = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    f"✅ Sync anyway ({format_amount(intent.total_amount, intent.currency)})",
-                    callback_data=f"sync:apply:{intent.total_amount:.2f}:{intent.currency}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    f"\U0001F4DD Log missed {kind} ({format_amount(abs(delta), intent.currency)})",
-                    callback_data=f"sync:{kind}:{abs(delta):.2f}:{intent.currency}",
-                )
-            ],
-        ]
-    )
     await message.reply_text(text, reply_markup=markup)
 
 

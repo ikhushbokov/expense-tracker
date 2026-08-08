@@ -44,3 +44,17 @@ def test_ordered_by_creation_time():
     with session_scope() as s:
         pending = repository.list_pending_messages(s)
         assert [p.text for p in pending] == ["first", "second"]
+
+
+def test_kind_defaults_to_text():
+    with session_scope() as s:
+        repository.enqueue_pending_message(s, chat_id=1, text="Spent 5000 on coffee")
+    with session_scope() as s:
+        assert repository.list_pending_messages(s)[0].kind == "text"
+
+
+def test_kind_can_be_set_to_balance_sync():
+    with session_scope() as s:
+        repository.enqueue_pending_message(s, chat_id=1, text="OCR'd screenshot text", kind="balance_sync")
+    with session_scope() as s:
+        assert repository.list_pending_messages(s)[0].kind == "balance_sync"

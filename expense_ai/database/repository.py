@@ -358,8 +358,8 @@ def list_income(
     return list(session.scalars(stmt).all())
 
 
-def enqueue_pending_message(session: Session, *, chat_id: int, text: str) -> PendingMessage:
-    pending = PendingMessage(chat_id=chat_id, text=text)
+def enqueue_pending_message(session: Session, *, chat_id: int, text: str, kind: str = "text") -> PendingMessage:
+    pending = PendingMessage(chat_id=chat_id, text=text, kind=kind)
     session.add(pending)
     session.flush()
     return pending
