@@ -39,6 +39,15 @@ class LLMClient:
             base_url=base_url or settings.llm_base_url,
             api_key=api_key or settings.llm_api_key or "not-needed",
             timeout=settings.llm_timeout_seconds,
+            # The SDK retries transient errors (timeouts, connection resets) 2
+            # more times by default -- on top of complete_json's own retry loop
+            # below, which exists for a different reason (falling back off
+            # JSON mode / reasoning_effort for endpoints that reject them). The
+            # two compound: a single hung request could silently cost up to
+            # (llm_max_retries+1) * 3 * llm_timeout_seconds before surfacing as
+            # one failure. Since we already have an outer retry loop, let each
+            # of *our* attempts fail fast instead of retrying underneath it too.
+            max_retries=0,
             # Some reverse-proxy / relay endpoints run bot-detection (Cloudflare
             # WAF etc.) that blocks the SDK's default "AsyncOpenAI/Python..." +
             # x-stainless-* fingerprint. A plain client User-Agent avoids that
