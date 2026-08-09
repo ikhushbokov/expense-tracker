@@ -22,15 +22,17 @@ any OpenAI-compatible endpoint).
   Ollama, vLLM, LM Studio, or any OpenAI-compatible server.
 - **SQLite storage** (via SQLAlchemy) — expenses, income, and OCR'd receipt
   metadata.
-- **Automatic categorization** into a fixed set of categories (Food,
+- **Automatic categorization** into a starting set of categories (Food,
   Transport, Gym, Supplements, Health, Entertainment, Shopping, Education,
   Bills, Rent, Restaurants, Electronics, Subscriptions, Travel, Family,
-  Gifts, Charity, Other). Anything edible/drinkable — meals, snacks, coffee,
-  any drink — is categorized "Food", with the specific item left in the
-  description (e.g. "Cold drink") rather than split into its own category.
-  Donations (charity, mosque/church/temple, someone in need) are
-  categorized "Charity", separate from "Gifts" (presents/money for a
-  specific person you know).
+  Gifts, Charity, Other), extendable any time with `/category add <name>` —
+  new categories are only ever created by you, never guessed by the LLM.
+  Anything edible/drinkable — meals, snacks, coffee, any drink — is
+  categorized "Food", with the specific item left in the description (e.g.
+  "Cold drink") rather than split into its own category. Donations
+  (charity, mosque/church/temple, someone in need) are categorized
+  "Charity", separate from "Gifts" (presents/money for a specific person
+  you know).
 - **Running balance** (income − expenses), tracked per currency.
 - **Monthly/weekly/daily summaries** with category breakdowns and
   percentages.
@@ -57,13 +59,9 @@ any OpenAI-compatible endpoint).
   as income or spending.
 - **Transfers**: "Transfer 200,000 from balance to savings" moves money
   between the two buckets without affecting your total net worth.
-- **Lending & borrowing**: "Gave Aziz 300,000, he'll pay me back" /
-  "Borrowed 200k from Vali" records a loan (not an expense/income — it's
-  expected to be repaid). "Aziz paid me back" settles it. `/debts` lists
-  everything still open, with a tap-to-settle button per loan.
-- **Savings goals**: "I'm saving 10,000,000 for a laptop" sets a target;
-  `/savings` shows progress toward it (against your existing savings
-  balance — one active goal per currency).
+- **Lending & borrowing**: recorded as a plain expense/income rather than a
+  separate ledger — "Gave Aziz 300,000, he'll pay me back" is an expense,
+  "Aziz paid me back 300,000" / "Borrowed 200k from Vali" is income.
 - **Month-over-month insights**: `/month` (and the month-end recap) call
   out how this month's spending compares to last month, overall and by
   category.
@@ -77,9 +75,8 @@ any OpenAI-compatible endpoint).
   sent to you as a Telegram document on a schedule (`BACKUP_INTERVAL_HOURS`,
   default 24h) — a free offsite backup of your entire financial history.
 - **Offline HTML dashboard**: `/dashboard` generates a self-contained
-  report (balances, category breakdown, 6-month trend, open loans, savings
-  goals) as a single HTML file you can open in any browser, no internet
-  connection needed.
+  report (balances, category breakdown, 6-month trend) as a single HTML
+  file you can open in any browser, no internet connection needed.
 - **Resilient to LLM/network outages**: if the LLM is unreachable when you
   message the bot, it tells you plainly, saves your message to a durable
   queue, and automatically retries every `RETRY_QUEUE_INTERVAL_SECONDS`
@@ -100,6 +97,7 @@ expense_tracker/
 │   ├── logging_setup.py       # Console + rotating file logging
 │   ├── llm.py                 # OpenAI-compatible client wrapper
 │   ├── parser.py               # LLM prompt + intent classification
+│   ├── local_parser.py          # No-LLM parsing for common expense/income/undo/export/chart messages
 │   ├── finance.py              # Balance / summary / category math
 │   ├── periods.py               # "this_month" -> (start, end) resolution
 │   ├── keyboards.py               # Shared month/week ◀/▶ pagination keyboards
@@ -110,18 +108,17 @@ expense_tracker/
 │   ├── dashboard.py                # Self-contained offline HTML report generator
 │   ├── database/
 │   │   ├── __init__.py           # Engine/session management, init_db()
-│   │   ├── models.py              # SQLAlchemy ORM models (incl. Debt, SavingsGoal)
+│   │   ├── models.py              # SQLAlchemy ORM models (incl. CustomCategory)
 │   │   └── repository.py          # All CRUD queries
 │   ├── models/
 │   │   └── schemas.py             # Pydantic schemas for LLM-structured intents
 │   ├── handlers/
 │   │   ├── common.py               # Owner-only access guard
-│   │   ├── commands.py              # /start, /help, /history, /income, /debts, /dashboard, quick commands
+│   │   ├── commands.py              # /start, /help, /history, /income, /category, /dashboard, quick commands
 │   │   ├── text.py                   # Routes text messages by intent
 │   │   ├── photo.py                   # Receipt photo -> OCR -> expense
 │   │   ├── queries.py                  # Read-only Q&A (balance, summaries...)
 │   │   ├── edit_search.py               # Edit / delete / search / export
-│   │   ├── debts.py                      # Lend/borrow/settle + /debts settle-button callback
 │   │   ├── history.py                    # /history Prev/Next pagination callback
 │   │   ├── income.py                      # /income Prev/Next pagination callback
 │   │   ├── summary.py                     # /month, /week Prev/Next pagination callback
@@ -223,10 +220,10 @@ starts polling for Telegram messages.
 LLM outage): `/today`, `/week`, `/month` (spending summaries — `/week` and
 `/month` have ◀/▶ buttons to page through past weeks/months, and `/month`
 includes month-over-month insights), `/income` (this month's income, with
-◀/▶ to page past months), `/budget` (balance), `/savings` (includes savings
-goal progress if one is set), `/total` (balance + savings), `/debts` (open
-loans, tap to settle), `/biggest`, `/chart`, `/dashboard` (offline HTML
-report), `/history` (optionally `/history 2026-06-15` for a specific date).
+◀/▶ to page past months), `/budget` (balance), `/savings`, `/total`
+(balance + savings), `/category list` / `/category add <name>`,
+`/biggest`, `/chart`, `/dashboard` (offline HTML report), `/history`
+(optionally `/history 2026-06-15` for a specific date).
 
 **Recording:**
 - "Spent 85,000 UZS on groceries."
@@ -271,17 +268,15 @@ LLM to classify it, and records the expense automatically.
 - "How much are my savings?"
 - "What's my total money?" / "What's my net worth?"
 
-**Lending & borrowing:**
-- "Gave Aziz 300,000, he'll pay me back next week." (lent — reduces balance)
-- "Borrowed 200k from Vali." (borrowed — increases balance)
-- "Aziz paid me back." / "I paid Vali back." (settles the loan)
-- "Delete the loan to Aziz." (undo one entered by mistake)
-- `/debts` — lists everything still open, with a tap-to-settle button per loan.
+**Lending & borrowing:** recorded as a plain expense/income, not a separate
+loan ledger.
+- "Gave Aziz 300,000, he'll pay me back next week." (an expense)
+- "Aziz paid me back 300,000." / "Borrowed 200k from Vali." (income)
 
-**Savings goals:**
-- "I'm saving 10,000,000 for a laptop."
-- "My travel fund goal is 5 million by December."
-- `/savings` then shows progress toward the goal alongside your balance.
+**Categories:**
+- `/category list` — shows every category currently in use.
+- `/category add Freelance Clients` — adds a new one you can categorize
+  expenses/income into; the bot never invents categories on its own.
 
 **Proactive (no message needed):** an evening recap of the day, a month-end
 summary with month-over-month insights, a monthly "does this balance still
