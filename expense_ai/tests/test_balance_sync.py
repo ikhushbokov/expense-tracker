@@ -36,14 +36,14 @@ def test_receipt_style_caption_is_not_a_sync():
 class _FakeLLMClient:
     """Stands in for expense_ai.llm.llm_client: returns a fixed
     {"amounts": [...], "currency": ...} instead of calling out. Accepts
-    (and ignores) image_data_url so it matches complete_json's real
-    signature now that vision input is supported."""
+    (and ignores) image_data_url/response_schema so it matches
+    complete_json's real signature."""
 
     def __init__(self, amounts, currency="UZS"):
         self._amounts = amounts
         self._currency = currency
 
-    async def complete_json(self, system_prompt, user_prompt, temperature=0.1, image_data_url=None):
+    async def complete_json(self, system_prompt, user_prompt, temperature=0.1, image_data_url=None, response_schema=None):
         return {"amounts": self._amounts, "currency": self._currency}
 
 

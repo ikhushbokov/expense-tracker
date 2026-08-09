@@ -78,6 +78,7 @@ class LLMClient:
         user_prompt: str,
         temperature: float = 0.1,
         image_data_url: str | None = None,
+        response_schema: dict | None = None,
     ) -> dict:
         """Ask the model for a JSON object and return it parsed as a dict.
 
@@ -86,13 +87,32 @@ class LLMClient:
         handlers/balance_sync.py's card-amount extraction for the only
         current caller.
 
+        If ``response_schema`` is given (a JSON Schema dict, object type,
+        ``additionalProperties: false``, every property listed in
+        ``required``), the first attempt asks for strict schema-validated
+        output (``response_format: json_schema``) instead of just
+        well-formed JSON (``json_object``) -- stronger, but only worth
+        building for a narrow, single-shape call; parser.py's general
+        16-intent classifier doesn't use this, both because that would be
+        real effort to get right across every intent shape and because
+        every failure seen in production has been a network timeout, never
+        malformed JSON the existing json_object + regex fallback couldn't
+        already handle.
+
         Tries the primary provider (with its own internal retries -- see
         _attempt_all); if that's exhausted and a fallback provider is
         configured, tries the fallback the same way before giving up.
         """
         try:
             return await self._attempt_all(
-                self._client, self.model, system_prompt, user_prompt, temperature, label="primary", image_data_url=image_data_url
+                self._client,
+                self.model,
+                system_prompt,
+                user_prompt,
+                temperature,
+                label="primary",
+                image_data_url=image_data_url,
+                response_schema=response_schema,
             )
         except LLMError as primary_error:
             if self._fallback_client is None:
@@ -107,6 +127,7 @@ class LLMClient:
                     temperature,
                     label="fallback",
                     image_data_url=image_data_url,
+                    response_schema=response_schema,
                 )
             except LLMError as fallback_error:
                 raise LLMError(
@@ -123,9 +144,11 @@ class LLMClient:
         *,
         label: str,
         image_data_url: str | None = None,
+        response_schema: dict | None = None,
     ) -> dict:
-        """Run the retry loop (JSON-mode -> plain-text fallback parsing)
-        against one client/model, raising LLMError once retries run out.
+        """Run the retry loop (schema/JSON-mode -> plain-text fallback
+        parsing) against one client/model, raising LLMError once retries
+        run out.
 
         Logs latency and outcome for every attempt (and the overall call)
         at INFO/WARNING/ERROR -- diagnosing a slow or degrading provider
@@ -155,7 +178,12 @@ class LLMClient:
                         {"role": "user", "content": user_content},
                     ],
                 }
-                if use_json_mode:
+                if use_json_mode and response_schema is not None:
+                    kwargs["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {"name": "response", "strict": True, "schema": response_schema},
+                    }
+                elif use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
                 if use_reasoning_effort and settings.llm_reasoning_effort:
                     kwargs["reasoning_effort"] = settings.llm_reasoning_effort

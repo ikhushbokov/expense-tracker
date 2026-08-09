@@ -80,6 +80,22 @@ class _CardAmounts(BaseModel):
     currency: str = "UZS"
 
 
+# Strict JSON Schema for _CardAmounts, used as this call's response_schema
+# (see llm.py's complete_json). Worth building for this one narrow,
+# single-shape extraction -- unlike parser.py's general 16-intent
+# classifier, where the same effort across every intent shape isn't
+# justified by anything actually seen failing in production.
+_CARD_AMOUNTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "amounts": {"type": "array", "items": {"type": "number"}},
+        "currency": {"type": "string"},
+    },
+    "required": ["amounts", "currency"],
+    "additionalProperties": False,
+}
+
+
 def _to_data_url(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
 
@@ -92,6 +108,7 @@ async def _extract_card_amounts(image_data_url: str) -> _CardAmounts:
         system_prompt=_AMOUNT_EXTRACTION_SYSTEM_PROMPT,
         user_prompt="Extract the account balances from this screenshot.",
         image_data_url=image_data_url,
+        response_schema=_CARD_AMOUNTS_SCHEMA,
     )
     return _CardAmounts.model_validate(raw)
 
