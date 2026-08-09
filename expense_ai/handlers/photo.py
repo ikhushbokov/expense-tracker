@@ -66,6 +66,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await message.reply_text("I couldn't find any readable text on that receipt. Try a clearer photo.")
         return
 
+    # See handlers/text.py for why this is a persistent placeholder rather
+    # than just the "typing..." action: this call can take up to ~90s
+    # during a provider outage, well past when "typing..." disappears.
+    placeholder = await message.reply_text("⏳ Reading your receipt...")
+
     caption_hint = f"\n\nUser caption: {message.caption}" if message.caption else ""
     receipt_prompt = (
         f"This text was OCR-extracted from a receipt photo, extract the total amount, "
@@ -77,11 +82,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.warning("LLM unreachable, queuing receipt text: %s", exc)
         with session_scope() as session:
             repository.enqueue_pending_message(session, chat_id=message.chat_id, text=receipt_prompt)
-        await message.reply_text(UNREACHABLE_MESSAGE)
+        await placeholder.edit_text(UNREACHABLE_MESSAGE)
         return
 
     if intent.type != "expense":
-        await message.reply_text(
+        await placeholder.edit_text(
             "I read the receipt but couldn't confidently extract an expense from it. "
             "Raw text:\n\n" + raw_text[:500]
         )
@@ -107,7 +112,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         balances = get_balances(session)
         balance_text = balances.get(intent.currency, 0.0)
 
-    await message.reply_text(
+    await placeholder.edit_text(
         "\U0001F9FE Receipt processed\n\n"
         f"Amount: {format_amount(expense.amount, expense.currency)}\n"
         f"Category: {expense.category}\n"

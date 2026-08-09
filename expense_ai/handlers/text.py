@@ -47,6 +47,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await context.bot.send_chat_action(chat_id=message.chat_id, action="typing")
+    # Telegram's "typing..." indicator disappears after ~5s, well inside
+    # normal LLM latency -- a persistent placeholder that gets edited into
+    # the real reply keeps something visible for however long this
+    # actually takes (up to ~90s during a provider outage), instead of the
+    # chat going silent until either the reply or the "can't reach AI"
+    # message shows up out of nowhere.
+    placeholder = await message.reply_text("⏳ Working on it...")
 
     try:
         response = await build_response(text)
@@ -54,7 +61,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.warning("LLM unreachable, queuing message %r: %s", text, exc)
         with session_scope() as session:
             repository.enqueue_pending_message(session, chat_id=message.chat_id, text=text)
-        await message.reply_text(UNREACHABLE_MESSAGE)
+        await placeholder.edit_text(UNREACHABLE_MESSAGE)
         return
 
-    await send_response_via_message(message, response)
+    if response.photo_path is None and response.document_path is None:
+        await placeholder.edit_text(response.text or "", reply_markup=response.reply_markup)
+    else:
+        await placeholder.delete()
+        await send_response_via_message(message, response)
