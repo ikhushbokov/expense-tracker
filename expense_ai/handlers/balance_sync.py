@@ -2,10 +2,20 @@
 
 Triggered by a photo captioned "sync" (see is_sync_photo(), and
 handlers/photo.py:handle_photo which routes to handle_sync_photo() instead
-of the receipt flow when it matches). OCR's the screenshot, then hands the
-raw text to the same set_balance path as a typed correction like "Card
-9710: 411,000; Card 3901: 629,000" -- parser.py already knows to sum every
-account mentioned into one total_amount, so no new intent type is needed.
+of the receipt flow when it matches). The screenshot is sent directly to
+the LLM as vision input (base64 data URL, see _extract_card_amounts) --
+NOT run through Tesseract like receipts are. Tesseract measurably
+mis-read this exact bot's own incident screenshot (a digit: "29,768.32"
+-> "29,768.52"; a bank name: "Aloqabank" -> "Alogabar", which is where the
+infamous "Alogabar" phantom expense came from), while the vision model
+got every value right on the same image. The LLM is asked to LIST each
+individual account/card balance shown -- explicitly NOT to sum them (see
+_extract_card_amounts's prompt); Python does the addition. This is
+deliberately its own narrow extraction call rather than going through
+parser.py's general set_balance intent (which asks the LLM for one
+pre-summed total_amount): summing several numbers is exactly the kind of
+arithmetic an LLM has gotten wrong on this bot twice in production, and
+listing is a strictly easier, more mechanical task than adding.
 
 A mismatch isn't applied blindly: it's usually either (a) something
 genuinely unaccounted for (a bank fee, cashback, a correction with no
@@ -24,13 +34,13 @@ handle_missed_transaction_description below) rather than re-parsing it
 as a brand new message.
 
 If the LLM is unreachable when the screenshot is first processed, the
-sync_prompt gets queued (kind="balance_sync", see repository.py) same as
-any other message -- but handlers/retry.py must NOT replay it through
-the generic build_response() path, since that would run set_balance
-through dispatch.py's unconditional reconcile_balance() and apply
-whatever the LLM says with no chance to confirm (this happened once in
-production with a wrong LLM-computed total). build_sync_mismatch_response()
-below is the shared "OCR text -> parse -> compute mismatch -> (text,
+image gets queued as a data URL (kind="balance_sync", see repository.py)
+same as any other message -- but handlers/retry.py must NOT replay it
+through the generic build_response() path, since that would run
+set_balance through dispatch.py's unconditional reconcile_balance() and
+apply whatever the LLM says with no chance to confirm (this happened once
+in production with a wrong LLM-computed total). build_sync_mismatch_response()
+below is the shared "image -> extract -> compute mismatch -> (text,
 markup)" step both handle_sync_photo and retry.py call, so the confirm
 buttons show up either way -- only *how* the result gets sent differs
 (message.reply_text vs. bot.send_message on a delay).
@@ -38,23 +48,52 @@ buttons show up either way -- only *how* the result gets sent differs
 
 from __future__ import annotations
 
+import base64
 import logging
-import tempfile
-import uuid
-from pathlib import Path
 
+from pydantic import BaseModel
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
+from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.finance import format_amount, get_balances, reconcile_balance
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.text import UNREACHABLE_MESSAGE
-from expense_ai.llm import LLMError
-from expense_ai.ocr import extract_image_text
+from expense_ai.llm import LLMError, llm_client
 from expense_ai.parser import parse_message
 
 logger = logging.getLogger(__name__)
+
+_AMOUNT_EXTRACTION_SYSTEM_PROMPT = """\
+You extract account balances from a screenshot of a banking app's list of
+cards/accounts. List EVERY individual account/card balance shown, each as
+its own number -- do NOT add them together, a later step handles the sum.
+Amounts are in Uzbek so'm/UZS unless another currency is clearly stated.
+Respond with JSON only: {"amounts": [<number>, <number>, ...], "currency": "<ISO code>"}.
+If you can't find any balances, return {"amounts": [], "currency": "UZS"}.
+"""
+
+
+class _CardAmounts(BaseModel):
+    amounts: list[float] = []
+    currency: str = "UZS"
+
+
+def _to_data_url(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
+
+
+async def _extract_card_amounts(image_data_url: str) -> _CardAmounts:
+    """List each balance shown in the screenshot -- deliberately does not
+    ask the LLM to sum them; build_sync_mismatch_response does the
+    addition in Python."""
+    raw = await llm_client.complete_json(
+        system_prompt=_AMOUNT_EXTRACTION_SYSTEM_PROMPT,
+        user_prompt="Extract the account balances from this screenshot.",
+        image_data_url=image_data_url,
+    )
+    return _CardAmounts.model_validate(raw)
 
 # How long a pending marker (the next photo after /sync, or the next text
 # reply describing a missed expense/income) stays valid before being
@@ -85,26 +124,29 @@ async def handle_sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-async def build_sync_mismatch_response(sync_prompt: str) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Parse an OCR'd cards-screenshot prompt and build the reply: either
-    the "already in sync" text (no buttons) or the mismatch text with the
-    "sync anyway" / "log missed expense or income" buttons. Shared by the
-    live path (handle_sync_photo) and the retry-queue path (handlers/retry.py)
-    so a delayed reply still asks instead of auto-applying. Raises LLMError
-    if the LLM is unreachable -- callers decide what to do about that."""
-    intent = await parse_message(sync_prompt)
+async def build_sync_mismatch_response(image_data_url: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Cards-screenshot data URL -> the reply: either the "already in
+    sync" text (no buttons) or the mismatch text with the "sync anyway" /
+    "log missed expense or income" buttons. Shared by the live path
+    (handle_sync_photo) and the retry-queue path (handlers/retry.py) so a
+    delayed reply still asks instead of auto-applying. Raises LLMError if
+    the LLM is unreachable -- callers decide what to do about that."""
+    extracted = await _extract_card_amounts(image_data_url)
 
-    if intent.type != "set_balance":
+    if not extracted.amounts:
         return "I read the screenshot but couldn't confidently total a balance from it.", None
 
+    total_amount = round(sum(extracted.amounts), 2)
+    currency = extracted.currency.upper().strip() or settings.default_currency
+
     with session_scope() as session:
-        current = get_balances(session, account="balance").get(intent.currency, 0.0)
-    delta = round(intent.total_amount - current, 2)
+        current = get_balances(session, account="balance").get(currency, 0.0)
+    delta = round(total_amount - current, 2)
 
     if delta == 0:
         return (
             "✅ Already in sync — tracked balance matches your cards: "
-            f"{format_amount(intent.total_amount, intent.currency)}.",
+            f"{format_amount(total_amount, currency)}.",
             None,
         )
 
@@ -112,9 +154,9 @@ async def build_sync_mismatch_response(sync_prompt: str) -> tuple[str, InlineKey
     kind = "expense" if missing else "income"
     text = (
         "⚠️ Balance mismatch\n\n"
-        f"Tracked: {format_amount(current, intent.currency)}\n"
-        f"From your cards: {format_amount(intent.total_amount, intent.currency)}\n"
-        f"Difference: {format_amount(abs(delta), intent.currency)} ({'missing' if missing else 'extra'})\n\n"
+        f"Tracked: {format_amount(current, currency)}\n"
+        f"From your cards: {format_amount(total_amount, currency)}\n"
+        f"Difference: {format_amount(abs(delta), currency)} ({'missing' if missing else 'extra'})\n\n"
         f"Sync anyway (an unexplained correction, not counted as income/spending), or log the "
         f"difference as a missed {kind} instead?"
     )
@@ -122,14 +164,14 @@ async def build_sync_mismatch_response(sync_prompt: str) -> tuple[str, InlineKey
         [
             [
                 InlineKeyboardButton(
-                    f"✅ Sync anyway ({format_amount(intent.total_amount, intent.currency)})",
-                    callback_data=f"sync:apply:{intent.total_amount:.2f}:{intent.currency}",
+                    f"✅ Sync anyway ({format_amount(total_amount, currency)})",
+                    callback_data=f"sync:apply:{total_amount:.2f}:{currency}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    f"\U0001F4DD Log missed {kind} ({format_amount(abs(delta), intent.currency)})",
-                    callback_data=f"sync:{kind}:{abs(delta):.2f}:{intent.currency}",
+                    f"\U0001F4DD Log missed {kind} ({format_amount(abs(delta), currency)})",
+                    callback_data=f"sync:{kind}:{abs(delta):.2f}:{currency}",
                 )
             ],
         ]
@@ -147,39 +189,23 @@ async def handle_sync_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     photo = message.photo[-1]  # highest resolution
     file = await photo.get_file()
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        image_path = Path(tmp_dir) / f"{uuid.uuid4().hex}.jpg"
-        await file.download_to_drive(custom_path=str(image_path))
-        try:
-            raw_text = extract_image_text(image_path)
-        except Exception as exc:
-            logger.error("OCR failed for balance-sync screenshot: %s", exc)
-            await message.reply_text(
-                "I couldn't read that screenshot automatically. You can tell me the total "
-                "directly instead, e.g. \"I have 3,614,000 across my cards\"."
-            )
-            return
+    image_data_url = _to_data_url(bytes(await file.download_as_bytearray()))
 
-    if not raw_text.strip():
-        await message.reply_text("I couldn't find any readable text in that screenshot. Try a clearer photo.")
-        return
+    # See handlers/text.py for why this is a persistent placeholder rather
+    # than just the "typing..." action: this call can take up to ~90s
+    # during a provider outage, well past when "typing..." disappears.
+    placeholder = await message.reply_text("⏳ Reading your screenshot...")
 
-    sync_prompt = (
-        "This text was OCR-extracted from a screenshot of my banking app's list of cards/accounts "
-        "and their balances (amounts are in Uzbek so'm/UZS unless stated otherwise). Sum every "
-        "balance shown into one total and record it as a correction to my current total balance:\n\n"
-        + raw_text
-    )
     try:
-        text, markup = await build_sync_mismatch_response(sync_prompt)
+        text, markup = await build_sync_mismatch_response(image_data_url)
     except LLMError as exc:
-        logger.warning("LLM unreachable, queuing balance-sync text: %s", exc)
+        logger.warning("LLM unreachable, queuing balance-sync image: %s", exc)
         with session_scope() as session:
-            repository.enqueue_pending_message(session, chat_id=message.chat_id, text=sync_prompt, kind="balance_sync")
-        await message.reply_text(UNREACHABLE_MESSAGE)
+            repository.enqueue_pending_message(session, chat_id=message.chat_id, text=image_data_url, kind="balance_sync")
+        await placeholder.edit_text(UNREACHABLE_MESSAGE)
         return
 
-    await message.reply_text(text, reply_markup=markup)
+    await placeholder.edit_text(text, reply_markup=markup)
 
 
 @restrict_to_owner
