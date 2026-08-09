@@ -44,15 +44,43 @@ balance logic.
   never income. A `transfer` intent is an intentional move between the two
   buckets. Don't conflate the two when adding features — a past bug did
   exactly that (deleting a savings entry silently became a transfer).
-- `Debt` rows (lending/borrowing money with another person) are a third,
-  separate ledger — not an Expense/Income (it's expected to be repaid, not
-  spent/earned) and not a Transfer (it involves someone else, not the
-  user's own two buckets). Always against `"balance"`, never `"savings"`.
-  `finance.get_balances` folds open+settled debts into the balance total
-  directly (see its docstring); `SavingsGoal` rows don't move money at
-  all — they're just a target compared against the existing `"savings"`
-  bucket total, one active goal per currency (no per-goal sub-partitioning
-  of savings).
+- Lending/borrowing money is deliberately just a plain `Expense`/`Income`
+  now, not a separate ledger — lending is an expense, getting repaid (or
+  borrowing) is income. There used to be a dedicated `Debt` model/ledger;
+  it was removed (along with `SavingsGoal`, which had zero real usage) in
+  favor of this simpler model, at the cost of lending/repayment briefly
+  distorting a month's spend/income totals — an accepted tradeoff given
+  how rarely it happens. Don't reintroduce a separate debt ledger without
+  discussing it first.
+
+### Categories are dynamic, not just the fixed list
+
+`CATEGORIES` in `models/schemas.py` is the *starting* set, not the full
+one — `finance.known_categories(session)` is the actual source of truth
+(fixed list + anything added via `/category add <name>`, stored in the
+`CustomCategory` table). Because that requires a DB session, categories
+are **not** validated/coerced in `ExpenseIntent`/`EditIntent` themselves
+(a stateless Pydantic validator can't see custom categories) — every
+caller that stores a category (`dispatch.py`'s "expense" branch,
+`photo.py`'s receipt flow, `edit_search.py`'s edit handling) is expected
+to run it through `finance.coerce_category(session, category)` first.
+New categories are only ever created by explicit `/category add` command
+— never invented by the LLM or guessed by `local_parser.py`; deciding
+"is this worth its own category" is a call left to the user.
+
+### Local-first parsing (`local_parser.py`)
+
+Enabled via `LOCAL_PARSER_ENABLED` (on by default as of this writing).
+`dispatch.py::build_response` tries `local_parser.try_parse_locally`
+*before* calling the LLM at all, for a handful of common, unambiguous
+message shapes (plain expense, income, "undo/delete the last X", export,
+chart) — see that module's own docstring for the exact rules and why
+each intent type is or isn't covered. It's intentionally paranoid about
+false positives (wrong ABSTAIN just costs one LLM call; wrong ACCEPT
+writes bad data), and when an expense's category can't be confidently
+resolved it still doesn't call the LLM — it logs the expense as "Other"
+with `category_confirmed=False`, and `dispatch.py` attaches a one-tap
+recategorize keyboard instead of asking the LLM to guess.
 
 ### Resilience / outage queue
 

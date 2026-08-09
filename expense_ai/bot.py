@@ -18,9 +18,9 @@ from expense_ai.handlers.commands import (
     BOT_COMMANDS,
     handle_biggest_command,
     handle_budget_command,
+    handle_category_command,
     handle_chart_command,
     handle_dashboard_command,
-    handle_debts_command,
     handle_export_command,
     handle_help,
     handle_history_command,
@@ -33,7 +33,7 @@ from expense_ai.handlers.commands import (
     handle_week_command,
 )
 from expense_ai.handlers.balance_sync import handle_sync_callback, handle_sync_command
-from expense_ai.handlers.debts import handle_debt_settle_callback
+from expense_ai.handlers.dispatch import handle_recategorize_callback
 from expense_ai.handlers.history import handle_history_callback
 from expense_ai.handlers.income import handle_income_callback
 from expense_ai.handlers.photo import handle_photo
@@ -71,7 +71,6 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("budget", handle_budget_command))
     application.add_handler(CommandHandler("savings", handle_savings_command))
     application.add_handler(CommandHandler("total", handle_total_command))
-    application.add_handler(CommandHandler("debts", handle_debts_command))
     application.add_handler(CommandHandler("biggest", handle_biggest_command))
     application.add_handler(CommandHandler("chart", handle_chart_command))
     application.add_handler(CommandHandler("dashboard", handle_dashboard_command))
@@ -79,12 +78,13 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("income", handle_income_command))
     application.add_handler(CommandHandler("sync", handle_sync_command))
     application.add_handler(CommandHandler("export", handle_export_command))
+    application.add_handler(CommandHandler("category", handle_category_command))
     application.add_handler(CallbackQueryHandler(handle_history_callback, pattern=r"^hist:"))
     application.add_handler(CallbackQueryHandler(handle_income_callback, pattern=r"^income:"))
     application.add_handler(CallbackQueryHandler(handle_month_summary_callback, pattern=r"^summary_month:"))
     application.add_handler(CallbackQueryHandler(handle_week_summary_callback, pattern=r"^summary_week:"))
-    application.add_handler(CallbackQueryHandler(handle_debt_settle_callback, pattern=r"^debt_settle:"))
     application.add_handler(CallbackQueryHandler(handle_sync_callback, pattern=r"^sync:"))
+    application.add_handler(CallbackQueryHandler(handle_recategorize_callback, pattern=r"^recat:"))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(handle_error)

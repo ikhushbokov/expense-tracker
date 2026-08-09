@@ -17,7 +17,7 @@ from telegram.ext import ContextTypes
 
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
-from expense_ai.finance import format_amount, get_balances
+from expense_ai.finance import coerce_category, format_amount, get_balances
 from expense_ai.handlers.balance_sync import SYNC_PENDING_WINDOW_SECONDS, handle_sync_photo, is_sync_photo
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.text import UNREACHABLE_MESSAGE
@@ -93,11 +93,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     with session_scope() as session:
+        category = coerce_category(session, intent.category)
         expense = repository.add_expense(
             session,
             amount=intent.amount,
             currency=intent.currency,
-            category=intent.category,
+            category=category,
             description=intent.description,
             source="photo",
         )

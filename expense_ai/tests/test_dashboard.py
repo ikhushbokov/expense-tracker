@@ -28,4 +28,3 @@ def test_generate_dashboard_html_handles_empty_database():
         path = generate_dashboard_html(s)
     html = path.read_text(encoding="utf-8")
     assert "No expenses recorded this month." in html
-    assert "No savings goals set." in html

@@ -18,8 +18,6 @@ from expense_ai.finance import (
     format_amount,
     get_balances,
     get_net_worth,
-    open_debt_totals,
-    render_savings_goal_lines,
     total_expenses_by_currency,
 )
 from expense_ai.periods import month_range, shift_month
@@ -104,20 +102,6 @@ def _monthly_trend(session: Session, *, year: int, month: int, months_back: int 
     return '<div class="trend">' + "".join(cols) + "</div>"
 
 
-def _debts_section(session: Session) -> str:
-    totals = open_debt_totals(session)
-    owed_to_me = ", ".join(format_amount(v, c) for c, v in totals["owed_to_me"].items()) or "—"
-    i_owe = ", ".join(format_amount(v, c) for c, v in totals["i_owe"].items()) or "—"
-    return '<div class="cards">' + _card("Owed to you", owed_to_me) + _card("You owe", i_owe) + "</div>"
-
-
-def _goals_section(session: Session) -> str:
-    lines = render_savings_goal_lines(session)
-    if not lines:
-        return '<p class="empty">No savings goals set.</p>'
-    return "<ul>" + "".join(f"<li>{line}</li>" for line in lines) + "</ul>"
-
-
 def generate_dashboard_html(session: Session) -> Path:
     today = dt.date.today()
     html = f"""<!DOCTYPE html>
@@ -133,12 +117,6 @@ def generate_dashboard_html(session: Session) -> Path:
 
 <h2>Last 6 months spending</h2>
 {_monthly_trend(session, year=today.year, month=today.month)}
-
-<h2>Open loans</h2>
-{_debts_section(session)}
-
-<h2>Savings goals</h2>
-{_goals_section(session)}
 
 </body></html>"""
 

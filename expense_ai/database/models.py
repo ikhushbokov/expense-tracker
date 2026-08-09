@@ -153,57 +153,24 @@ class PendingMissedTransaction(Base):
         return f"<PendingMissedTransaction id={self.id} chat_id={self.chat_id} kind={self.kind} amount={self.amount}>"
 
 
-class Debt(Base):
-    """Money lent to or borrowed from another person -- distinct from
-    Expense/Income (it's not a spend or an earning, it's expected to be repaid)
-    and from Transfer (it involves another person, not your own two buckets).
+class CustomCategory(Base):
+    """A category added via /category, on top of the fixed CATEGORIES list
+    in models/schemas.py. Deliberately created only by explicit user
+    command, never invented by the LLM or guessed by local_parser.py --
+    see finance.known_categories(), the single place fixed + custom
+    categories get combined for validation everywhere a category is
+    checked (ExpenseIntent/EditIntent no longer validate categories
+    themselves, since a stateless Pydantic validator can't see this
+    table)."""
 
-    ``direction`` is "lent" (you gave money out, they owe you -- reduces
-    ``balance`` immediately) or "borrowed" (you received money, you owe them --
-    increases ``balance`` immediately). Settling the debt reverses that effect
-    via ``settled_amount`` (defaults to ``amount`` if the repayment matched
-    exactly). Always against the "balance" bucket, never "savings".
-    """
-
-    __tablename__ = "debts"
+    __tablename__ = "custom_categories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    datetime: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=lambda: dt.datetime.now(), index=True
-    )
-    person: Mapped[str] = mapped_column(String(255), nullable=False)
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
-    currency: Mapped[str] = mapped_column(String(8), nullable=False)
-    direction: Mapped[str] = mapped_column(String(16), nullable=False)  # "lent" | "borrowed"
-    note: Mapped[str] = mapped_column(String(255), default="")
-    status: Mapped[str] = mapped_column(String(16), default="open", server_default="open")  # "open" | "settled"
-    settled_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
-    settled_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return f"<Debt id={self.id} {self.direction} {self.person} amount={self.amount} {self.currency} status={self.status}>"
-
-
-class SavingsGoal(Base):
-    """A named savings target the user is working toward. Progress is
-    measured against the shared "savings" bucket total for ``currency`` --
-    goals don't partition savings into separate pools (see database/models.py:
-    Transfer docstring on why there are only two money buckets, not more).
-    One active goal per currency: setting a new goal for a currency replaces
-    the old one.
-    """
-
-    __tablename__ = "savings_goals"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    target_amount: Mapped[float] = mapped_column(Float, nullable=False)
-    currency: Mapped[str] = mapped_column(String(8), nullable=False, unique=True)
-    target_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=lambda: dt.datetime.now())
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<SavingsGoal name={self.name!r} target={self.target_amount} {self.currency}>"
+        return f"<CustomCategory name={self.name!r}>"
 
 
 class Receipt(Base):

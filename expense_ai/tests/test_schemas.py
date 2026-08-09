@@ -13,9 +13,14 @@ def test_expense_requires_positive_amount():
         ExpenseIntent(amount=-5, currency="UZS", category="Food")
 
 
-def test_expense_unknown_category_coerced_to_other():
+def test_expense_category_passes_through_uncoerced():
+    """Categories are dynamic now (fixed CATEGORIES + anything added via
+    /category), which a stateless Pydantic validator can't know about --
+    coercing an unknown category to "Other" is finance.coerce_category's
+    job, run downstream once a DB session is available (dispatch.py,
+    photo.py), not this schema's."""
     intent = ExpenseIntent(amount=1000, currency="uzs", category="NotARealCategory")
-    assert intent.category == "Other"
+    assert intent.category == "NotARealCategory"
     assert intent.currency == "UZS"
 
 

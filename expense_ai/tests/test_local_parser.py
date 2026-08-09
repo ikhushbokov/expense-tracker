@@ -100,9 +100,8 @@ def test_default_currency_used_when_unspecified():
         "I have 2000000 on my cards",
         "My balance is 3000000",
         "Transfer 200000 from balance to savings",
-        "Lent 50000 to Aziz",
-        "Borrowed 200000 from Vali",
-        "Aziz paid me back 300000",
+        "I owe Vali 50000",
+        "Loan payment due 100000",
         "Saving 1000000 for a laptop",
         "Change the 45000 expense to groceries",
         "How much did I spend this month?",
@@ -128,21 +127,31 @@ def test_abstains_with_multiple_amounts():
         assert local_parser.try_parse_locally(s, "45000 and 5000 for taxi") is None
 
 
-def test_abstains_on_unseen_vocabulary():
+def test_unresolvable_category_logs_as_other_unconfirmed():
+    """No LLM fallback for an unresolvable category anymore -- log it now
+    as "Other" and let dispatch.py attach a one-tap recategorize prompt
+    instead of abstaining."""
     _seed_history()
     with session_scope() as s:
-        assert local_parser.try_parse_locally(s, "82000 zzqxnotarealword") is None
+        intent = local_parser.try_parse_locally(s, "82000 zzqxnotarealword")
+    assert intent is not None
+    assert intent.type == "expense"
+    assert intent.category == "Other"
+    assert intent.category_confirmed is False
 
 
-def test_abstains_on_tied_category_vote():
+def test_tied_category_vote_logs_as_other_unconfirmed():
     with session_scope() as s:
         repository.add_expense(s, amount=1, currency="UZS", category="Food", description="snack")
         repository.add_expense(s, amount=1, currency="UZS", category="Shopping", description="snack")
     with session_scope() as s:
-        assert local_parser.try_parse_locally(s, "12000 snack") is None
+        intent = local_parser.try_parse_locally(s, "12000 snack")
+    assert intent is not None
+    assert intent.category == "Other"
+    assert intent.category_confirmed is False
 
 
-def test_abstains_when_only_token_seen_once():
+def test_token_seen_once_logs_as_other_unconfirmed():
     """A word seen exactly once historically isn't real evidence -- found
     empirically: "paid" appeared once under "Other" and once under
     "Subscriptions" in real data, and single-occurrence votes guessed
@@ -150,7 +159,10 @@ def test_abstains_when_only_token_seen_once():
     with session_scope() as s:
         repository.add_expense(s, amount=1, currency="UZS", category="Other", description="paid off my debt")
     with session_scope() as s:
-        assert local_parser.try_parse_locally(s, "40000 SSTP paid app") is None
+        intent = local_parser.try_parse_locally(s, "40000 SSTP paid app")
+    assert intent is not None
+    assert intent.category == "Other"
+    assert intent.category_confirmed is False
 
 
 def test_accepts_when_token_seen_at_least_twice():
@@ -170,9 +182,12 @@ def test_abstains_on_long_message():
         assert local_parser.try_parse_locally(s, text) is None
 
 
-def test_abstains_with_no_history_at_all():
+def test_no_history_at_all_logs_as_other_unconfirmed():
     with session_scope() as s:
-        assert local_parser.try_parse_locally(s, "45000 taxi") is None
+        intent = local_parser.try_parse_locally(s, "45000 taxi")
+    assert intent is not None
+    assert intent.category == "Other"
+    assert intent.category_confirmed is False
 
 
 def test_explicit_trailing_category_works_with_zero_history():
@@ -251,10 +266,22 @@ def test_income_abstains_without_amount():
         assert local_parser.try_parse_locally(s, "Got paid today") is None
 
 
-def test_paid_me_back_does_not_trigger_income():
-    """"paid me back" is settle_debt, not income -- must not misfire."""
+def test_paid_me_back_triggers_income():
+    """Repayment is just income now (no separate settle_debt ledger) --
+    "paid me back" unambiguously means money landing in your hands."""
     with session_scope() as s:
-        assert local_parser.try_parse_locally(s, "Aziz paid me back 300000") is None
+        intent = local_parser.try_parse_locally(s, "Aziz paid me back 300000")
+    assert intent is not None
+    assert intent.type == "income"
+    assert intent.amount == 300000
+
+
+def test_borrowed_triggers_income():
+    with session_scope() as s:
+        intent = local_parser.try_parse_locally(s, "Borrowed 200000 from Vali")
+    assert intent is not None
+    assert intent.type == "income"
+    assert intent.amount == 200000
 
 
 # --- undo/delete last X --------------------------------------------------
@@ -280,10 +307,12 @@ def test_undo_last_transfer_target():
     assert intent.target == "last_transfer"
 
 
-def test_undo_last_debt_target():
+def test_undo_abstains_on_loan_mention():
+    """No dedicated ledger for lending anymore, so there's no reliable way
+    to tell "the last loan" apart from any other expense -- abstain
+    rather than guess "last_expense" and maybe delete the wrong thing."""
     with session_scope() as s:
-        intent = local_parser.try_parse_locally(s, "delete the last loan")
-    assert intent.target == "last_debt"
+        assert local_parser.try_parse_locally(s, "delete the last loan") is None
 
 
 def test_undo_abstains_without_last_or_previous():

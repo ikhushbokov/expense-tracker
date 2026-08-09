@@ -13,7 +13,7 @@ from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
 
 from expense_ai.dashboard import generate_dashboard_html
-from expense_ai.database import session_scope
+from expense_ai.database import repository, session_scope
 from expense_ai.finance import (
     biggest_expenses,
     build_monthly_summary,
@@ -21,13 +21,12 @@ from expense_ai.finance import (
     format_amount,
     get_balances,
     get_net_worth,
+    known_categories,
     month_over_month_insights,
     no_spend_streak_days,
-    render_savings_goal_lines,
     render_summary,
 )
 from expense_ai.handlers.common import restrict_to_owner
-from expense_ai.handlers.debts import open_debts_keyboard, render_open_debts_text
 from expense_ai.handlers.edit_search import handle_export
 from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.income import render_month_income_text
@@ -54,14 +53,15 @@ WELCOME_MESSAGE = (
     "/budget — current balance\n"
     "/savings — money set aside for goals\n"
     "/total — balance + savings combined\n"
-    "/debts — open loans (lent/borrowed), tap to settle\n"
     "/biggest — biggest expenses\n"
     "/chart — spending pie chart\n"
-    "/dashboard — offline HTML dashboard (balances, trends, loans, goals)\n"
+    "/dashboard — offline HTML dashboard (balances, trends)\n"
     "/history — day-by-day transaction log (◀/▶ to page through days)\n"
     "/sync — sync tracked balance from a cards/accounts screenshot\n"
     "/export [csv|xlsx|json|pdf] [this_week|this_month|last_month|all_time] "
-    "— export your data, e.g. /export xlsx this_month\n\n"
+    "— export your data, e.g. /export xlsx this_month\n"
+    "/category list — show all categories\n"
+    "/category add <name> — add a new one, e.g. /category add University Contract\n\n"
     "You can also send a photo of a receipt and I'll read it automatically, "
     "or a screenshot of your cards/accounts captioned \"sync\" to reconcile your balance.\n"
     "Type /help any time to see this again."
@@ -77,15 +77,15 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("month", "This month's spending summary"),
     BotCommand("income", "This month's income"),
     BotCommand("budget", "Current balance"),
-    BotCommand("savings", "Money set aside for goals"),
+    BotCommand("savings", "Money set aside, not day-to-day"),
     BotCommand("total", "Balance + savings combined"),
-    BotCommand("debts", "Open loans (lent/borrowed)"),
     BotCommand("biggest", "Biggest expenses"),
     BotCommand("chart", "Spending pie chart (this month)"),
     BotCommand("dashboard", "Offline HTML dashboard"),
     BotCommand("history", "Day-by-day transaction log"),
     BotCommand("sync", "Sync tracked balance from a cards screenshot"),
     BotCommand("export", "Export your data (csv/xlsx/json/pdf)"),
+    BotCommand("category", "List or add expense categories"),
     BotCommand("help", "Show usage help"),
 ]
 
@@ -164,13 +164,10 @@ async def handle_budget_command(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_savings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with session_scope() as session:
         balances = get_balances(session, account="savings")
-        goal_lines = render_savings_goal_lines(session)
     if not balances:
         text = "You have no savings recorded yet."
     else:
         text = "\U0001F416 Savings:\n" + "\n".join(format_amount(v, c) for c, v in balances.items())
-    if goal_lines:
-        text += "\n\n" + "\n".join(goal_lines)
     await update.effective_message.reply_text(text)
 
 
@@ -221,14 +218,6 @@ async def handle_dashboard_command(update: Update, context: ContextTypes.DEFAULT
 
 
 @restrict_to_owner
-async def handle_debts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    with session_scope() as session:
-        text = render_open_debts_text(session)
-        markup = open_debts_keyboard(session)
-    await update.effective_message.reply_text(text, reply_markup=markup)
-
-
-@restrict_to_owner
 async def handle_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     day = dt.date.today()
     if context.args:
@@ -267,3 +256,32 @@ async def handle_export_command(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         with file_path.open("rb") as f:
             await update.effective_message.reply_document(document=f, filename=file_path.name, caption=caption)
+
+
+@restrict_to_owner
+async def handle_category_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/category list, or /category add <name> -- the only way a new
+    category gets created. Deliberately not something the LLM or
+    local_parser.py ever decides on its own (see finance.known_categories'
+    docstring): whether something deserves its own category is a real
+    judgment call, so it stays yours to make, explicitly."""
+    args = context.args or []
+    if not args or args[0].lower() == "list":
+        with session_scope() as session:
+            categories = known_categories(session)
+        await update.effective_message.reply_text("Categories:\n" + "\n".join(categories))
+        return
+
+    if args[0].lower() != "add" or len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage:\n/category list — show all categories\n/category add <name> — add a new one"
+        )
+        return
+
+    name = " ".join(args[1:]).strip()
+    with session_scope() as session:
+        if name.lower() in (c.lower() for c in known_categories(session)):
+            await update.effective_message.reply_text(f'"{name}" already exists.')
+            return
+        repository.add_custom_category(session, name)
+    await update.effective_message.reply_text(f"✅ Added category: {name}")

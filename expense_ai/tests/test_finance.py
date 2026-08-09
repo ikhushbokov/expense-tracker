@@ -6,10 +6,45 @@ from expense_ai.database import repository, session_scope
 from expense_ai.finance import (
     biggest_expenses,
     category_breakdown,
+    coerce_category,
     get_balances,
+    known_categories,
     total_expenses_by_currency,
     total_income_by_currency,
 )
+from expense_ai.models.schemas import CATEGORIES
+
+
+def test_known_categories_is_fixed_list_when_no_custom_ones():
+    with session_scope() as s:
+        assert known_categories(s) == CATEGORIES
+
+
+def test_known_categories_includes_custom_ones_before_other():
+    with session_scope() as s:
+        repository.add_custom_category(s, "University Contract")
+    with session_scope() as s:
+        categories = known_categories(s)
+    assert "University Contract" in categories
+    assert categories[-1] == "Other"
+    assert categories.index("University Contract") < categories.index("Other")
+
+
+def test_coerce_category_keeps_known_category():
+    with session_scope() as s:
+        assert coerce_category(s, "Food") == "Food"
+
+
+def test_coerce_category_keeps_custom_category():
+    with session_scope() as s:
+        repository.add_custom_category(s, "University Contract")
+    with session_scope() as s:
+        assert coerce_category(s, "University Contract") == "University Contract"
+
+
+def test_coerce_category_falls_back_to_other():
+    with session_scope() as s:
+        assert coerce_category(s, "NotARealCategory") == "Other"
 
 
 def _seed():

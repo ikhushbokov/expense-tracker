@@ -57,7 +57,7 @@ from telegram.ext import ContextTypes
 
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
-from expense_ai.finance import format_amount, get_balances, reconcile_balance
+from expense_ai.finance import coerce_category, format_amount, get_balances, reconcile_balance
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.text import UNREACHABLE_MESSAGE
 from expense_ai.llm import LLMError, llm_client
@@ -281,6 +281,7 @@ async def handle_missed_transaction_description(message: Message, kind: str, amo
 
     with session_scope() as session:
         if kind == "expense":
+            category = coerce_category(session, category)
             repository.add_expense(
                 session, amount=amount, currency=currency, category=category, description=final_description
             )

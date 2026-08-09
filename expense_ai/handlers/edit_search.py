@@ -10,7 +10,7 @@ from pathlib import Path
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.database.models import Expense, Transfer
-from expense_ai.finance import describe_debt, describe_transfer, format_amount
+from expense_ai.finance import coerce_category, describe_transfer, format_amount
 from expense_ai.models.schemas import DeleteIntent, EditIntent, ExportIntent, SearchIntent
 from expense_ai.periods import resolve_period
 
@@ -86,10 +86,12 @@ def handle_edit(intent: EditIntent) -> str:
         if intent.new_amount is None and intent.new_category is None and intent.new_description is None:
             return "Tell me what to change — amount, category, or description."
 
+        new_category = coerce_category(session, intent.new_category) if intent.new_category is not None else None
+
         before = f"{format_amount(expense.amount, expense.currency)} / {expense.category} / {expense.description or '-'}"
         changed = (
             (intent.new_amount is not None and intent.new_amount != expense.amount)
-            or (intent.new_category is not None and intent.new_category != expense.category)
+            or (new_category is not None and new_category != expense.category)
             or (intent.new_description is not None and intent.new_description != expense.description)
         )
         if not changed:
@@ -99,7 +101,7 @@ def handle_edit(intent: EditIntent) -> str:
             session,
             expense.id,
             amount=intent.new_amount,
-            category=intent.new_category,
+            category=new_category,
             description=intent.new_description,
         )
         assert updated is not None
@@ -124,14 +126,6 @@ def handle_delete(intent: DeleteIntent) -> str:
             summary = describe_transfer(transfer)
             repository.delete_transfer(session, transfer.id)
             return f"\U0001F5D1 Deleted adjustment/transfer: {summary}"
-
-        if intent.target == "last_debt":
-            debt = repository.last_debt(session, keyword=intent.keyword, currency=intent.currency)
-            if debt is None:
-                return "You don't have any loans recorded."
-            summary = describe_debt(debt)
-            repository.delete_debt(session, debt.id)
-            return f"\U0001F5D1 Deleted loan: {summary}"
 
         if intent.target == "last_expense":
             expense = repository.last_expense(session)

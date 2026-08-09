@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from expense_ai.database import repository
-from expense_ai.database.models import Debt, Transfer
+from expense_ai.database.models import Transfer
+from expense_ai.models.schemas import CATEGORIES
 from expense_ai.periods import month_range, resolve_period, shift_month
 
 ACCOUNTS = ("balance", "savings")
@@ -47,39 +48,6 @@ def describe_transfer(transfer: Transfer) -> str:
     return f"{format_amount(transfer.amount, transfer.currency)} ({frm} → {to}{f', ' + transfer.note if transfer.note else ''})"
 
 
-def describe_debt(debt: Debt) -> str:
-    verb = "Lent to" if debt.direction == "lent" else "Borrowed from"
-    suffix = f" — {debt.note}" if debt.note else ""
-    return f"{verb} {debt.person}: {format_amount(debt.amount, debt.currency)}{suffix}"
-
-
-def savings_goal_progress(session: Session, *, target_amount: float, currency: str) -> tuple[float, float]:
-    """(current savings amount, percentage of target reached) for ``currency``."""
-    current = get_balances(session, account="savings").get(currency, 0.0)
-    pct = (current / target_amount * 100) if target_amount else 0.0
-    return current, pct
-
-
-def _progress_bar(pct: float, width: int = 10) -> str:
-    filled = max(0, min(width, round(pct / 100 * width)))
-    return "▓" * filled + "░" * (width - filled)
-
-
-def render_savings_goal_lines(session: Session) -> list[str]:
-    """One line per active savings goal: progress toward its target, for
-    display under /savings. Empty list if no goals are set."""
-    lines = []
-    for goal in repository.list_savings_goals(session):
-        current, pct = savings_goal_progress(session, target_amount=goal.target_amount, currency=goal.currency)
-        deadline = f" (by {goal.target_date.strftime('%b %d, %Y')})" if goal.target_date else ""
-        marker = "\U0001F3AF" if pct < 100 else "\U0001F389"
-        lines.append(
-            f"{marker} {goal.name}{deadline}: {format_amount(current, goal.currency)} / "
-            f"{format_amount(goal.target_amount, goal.currency)} ({pct:.0f}%) {_progress_bar(pct)}"
-        )
-    return lines
-
-
 def no_spend_streak_days(session: Session, *, today: dt.date | None = None) -> int:
     """Days since the last recorded expense, ending today. 0 if an expense
     was already logged today (or none exist at all)."""
@@ -90,14 +58,23 @@ def no_spend_streak_days(session: Session, *, today: dt.date | None = None) -> i
     return (today - last.datetime.date()).days
 
 
-def open_debt_totals(session: Session) -> dict[str, dict[str, float]]:
-    """{"owed_to_me": {currency: total}, "i_owe": {currency: total}} for
-    still-open debts, i.e. what /debts should show as outstanding."""
-    totals: dict[str, dict[str, float]] = {"owed_to_me": defaultdict(float), "i_owe": defaultdict(float)}
-    for debt in repository.list_debts(session, status="open"):
-        key = "owed_to_me" if debt.direction == "lent" else "i_owe"
-        totals[key][debt.currency] += debt.amount
-    return {key: dict(by_currency) for key, by_currency in totals.items()}
+def known_categories(session: Session) -> list[str]:
+    """Fixed CATEGORIES plus any custom ones added via /category, "Other"
+    always last. The single place fixed + custom categories are combined
+    -- ExpenseIntent/EditIntent don't validate categories themselves
+    anymore (a stateless Pydantic validator can't see the custom-category
+    table), so every caller that stores a category should run it through
+    coerce_category() below first."""
+    custom = repository.list_custom_category_names(session)
+    fixed = [c for c in CATEGORIES if c != "Other"]
+    return fixed + custom + ["Other"]
+
+
+def coerce_category(session: Session, category: str) -> str:
+    """``category`` if it's a known one (fixed or custom), else "Other" --
+    the safety net that used to live in a Pydantic validator, now here
+    since knowing what's "known" requires DB access."""
+    return category if category in known_categories(session) else "Other"
 
 
 @dataclass
@@ -119,9 +96,11 @@ class MonthlySummary:
 
 def get_balances(session: Session, *, account: str = "balance") -> dict[str, float]:
     """Running total for one account: its income minus its expenses, plus
-    net transfers into/out of it, plus net debts (money lent/borrowed and
-    repaid -- see database/models.py:Debt), grouped by currency. Debts only
-    ever apply to "balance" -- lending/borrowing doesn't touch savings."""
+    net transfers into/out of it, grouped by currency.
+
+    Lending/borrowing money is deliberately just a plain Expense/Income
+    now (lending = expense, getting repaid = income) rather than a
+    separate ledger -- there's no debt-specific folding here anymore."""
     balances: dict[str, float] = defaultdict(float)
     for income in repository.list_income(session, account=account):
         balances[income.currency] += income.amount
@@ -132,13 +111,6 @@ def get_balances(session: Session, *, account: str = "balance") -> dict[str, flo
             balances[transfer.currency] += transfer.amount
         if transfer.from_account == account:
             balances[transfer.currency] -= transfer.amount
-    if account == "balance":
-        for debt in repository.list_debts(session):
-            sign = -1 if debt.direction == "lent" else 1
-            balances[debt.currency] += sign * debt.amount
-            if debt.status == "settled":
-                repaid = debt.settled_amount if debt.settled_amount is not None else debt.amount
-                balances[debt.currency] -= sign * repaid
     return dict(balances)
 
 

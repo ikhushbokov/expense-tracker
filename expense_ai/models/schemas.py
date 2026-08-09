@@ -60,16 +60,25 @@ class LLMIntentBase(BaseModel):
 
 
 class ExpenseIntent(LLMIntentBase):
+    """``category`` is intentionally NOT validated against a fixed list
+    here anymore: categories are now dynamic (fixed CATEGORIES plus
+    whatever's been added via /category), which a stateless Pydantic
+    validator can't know about. Whether a category is "known" is checked
+    downstream, with DB access, in finance.coerce_category -- every
+    caller that stores an expense (dispatch.py, photo.py) is expected to
+    run the category through that before it reaches repository.add_expense.
+
+    ``category_confirmed`` is False only when local_parser.py logged this
+    as "Other" because it couldn't confidently resolve a real category
+    (not because the user said "Other") -- callers use that to attach a
+    one-tap recategorize prompt instead of asking the LLM to guess."""
+
     type: Literal["expense"] = "expense"
     amount: float = Field(gt=0)
     currency: str = "UZS"
     category: str = "Other"
     description: str = ""
-
-    @field_validator("category")
-    @classmethod
-    def _known_category(cls, v: str) -> str:
-        return v if v in CATEGORIES else "Other"
+    category_confirmed: bool = True
 
     @field_validator("currency")
     @classmethod
@@ -154,64 +163,6 @@ class TransferIntent(LLMIntentBase):
         return v.upper().strip() if v else "UZS"
 
 
-class DebtIntent(LLMIntentBase):
-    """User lent money to someone (they owe the user) or borrowed money from
-    someone (the user owes them). Distinct from expense/income -- it's
-    expected to be repaid, not spent/earned -- and from transfer, which is
-    strictly between the user's own balance/savings buckets."""
-
-    type: Literal["debt"] = "debt"
-    person: str
-    amount: float = Field(gt=0)
-    currency: str = "UZS"
-    direction: Literal["lent", "borrowed"] = "lent"
-    note: str = ""
-
-    @field_validator("currency")
-    @classmethod
-    def _upper_currency(cls, v: str) -> str:
-        return v.upper().strip() if v else "UZS"
-
-
-class SettleDebtIntent(LLMIntentBase):
-    """User is saying a previous loan was repaid -- either they got their
-    money back (a "lent" debt) or they paid back what they owed (a
-    "borrowed" debt). Fields: person (to find which debt among possibly
-    several), amount (only if the repayment differs from the original, e.g.
-    "Aziz paid me back 280,000 of the 300,000", else null -- defaults to the
-    original amount), currency (only to disambiguate multiple currencies)."""
-
-    type: Literal["settle_debt"] = "settle_debt"
-    person: str | None = None
-    amount: float | None = None
-    currency: str | None = None
-
-    @field_validator("currency")
-    @classmethod
-    def _upper_currency(cls, v: str | None) -> str | None:
-        return v.upper().strip() if v else v
-
-
-class SavingsGoalIntent(LLMIntentBase):
-    """User is setting or updating a savings target, e.g. "I'm saving
-    10,000,000 for a laptop" or "My travel fund goal is 5 million". Progress
-    is tracked against the existing "savings" bucket total for the given
-    currency -- this doesn't create a new money bucket, just a target to
-    compare the savings balance against. One active goal per currency:
-    setting a new one replaces the old goal for that currency."""
-
-    type: Literal["savings_goal"] = "savings_goal"
-    name: str
-    target_amount: float = Field(gt=0)
-    currency: str = "UZS"
-    target_date: dt.date | None = None
-
-    @field_validator("currency")
-    @classmethod
-    def _upper_currency(cls, v: str) -> str:
-        return v.upper().strip() if v else "UZS"
-
-
 class EditIntent(LLMIntentBase):
     type: Literal["edit"] = "edit"
     target: Literal["last_expense", "last_income", "last_transfer", "search"] = "last_expense"
@@ -229,12 +180,9 @@ class EditIntent(LLMIntentBase):
     match_amount: float | None = None
     match_currency: str | None = None
 
-    @field_validator("new_category")
-    @classmethod
-    def _known_category(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        return v if v in CATEGORIES else "Other"
+    # new_category isn't validated against a fixed list here -- see
+    # ExpenseIntent's docstring; finance.coerce_category handles it
+    # downstream, with DB access, once the edit is actually applied.
 
     @field_validator("match_currency")
     @classmethod
@@ -244,10 +192,7 @@ class EditIntent(LLMIntentBase):
 
 class DeleteIntent(LLMIntentBase):
     type: Literal["delete"] = "delete"
-    target: Literal["last_expense", "last_income", "last_transfer", "last_debt", "search"] = "last_expense"
-    # For target == "last_debt", keyword is matched against the person's name
-    # (e.g. "delete the loan to Aziz" -> keyword "Aziz") to disambiguate
-    # among several open debts, same role as person on DebtIntent/SettleDebtIntent.
+    target: Literal["last_expense", "last_income", "last_transfer", "search"] = "last_expense"
     keyword: str | None = None
     period: Literal["today", "yesterday", "this_week", "this_month", "all_time"] = "all_time"
     category: str | None = None
@@ -311,9 +256,6 @@ AnyIntent = (
     | QueryIntent
     | SetBalanceIntent
     | TransferIntent
-    | DebtIntent
-    | SettleDebtIntent
-    | SavingsGoalIntent
     | EditIntent
     | DeleteIntent
     | SearchIntent
@@ -329,9 +271,6 @@ INTENT_MODELS: dict[str, type[BaseModel]] = {
     "query": QueryIntent,
     "set_balance": SetBalanceIntent,
     "transfer": TransferIntent,
-    "debt": DebtIntent,
-    "settle_debt": SettleDebtIntent,
-    "savings_goal": SavingsGoalIntent,
     "edit": EditIntent,
     "delete": DeleteIntent,
     "search": SearchIntent,
