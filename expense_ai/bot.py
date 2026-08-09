@@ -21,6 +21,7 @@ from expense_ai.handlers.commands import (
     handle_chart_command,
     handle_dashboard_command,
     handle_debts_command,
+    handle_export_command,
     handle_help,
     handle_history_command,
     handle_income_command,
@@ -77,6 +78,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("history", handle_history_command))
     application.add_handler(CommandHandler("income", handle_income_command))
     application.add_handler(CommandHandler("sync", handle_sync_command))
+    application.add_handler(CommandHandler("export", handle_export_command))
     application.add_handler(CallbackQueryHandler(handle_history_callback, pattern=r"^hist:"))
     application.add_handler(CallbackQueryHandler(handle_income_callback, pattern=r"^income:"))
     application.add_handler(CallbackQueryHandler(handle_month_summary_callback, pattern=r"^summary_month:"))

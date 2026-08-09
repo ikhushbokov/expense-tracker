@@ -21,7 +21,7 @@ from expense_ai.handlers.debts import handle_debt, handle_settle_debt
 from expense_ai.handlers.edit_search import handle_delete, handle_edit, handle_export, handle_search
 from expense_ai.handlers.queries import handle_query
 from expense_ai.history import day_keyboard, render_day_text
-from expense_ai.local_parser import try_parse_expense_locally
+from expense_ai.local_parser import try_parse_locally
 from expense_ai.models.schemas import (
     ChartIntent,
     DebtIntent,
@@ -70,9 +70,9 @@ async def build_response(text: str) -> BotResponse:
     handlers/retry.py), since it means nothing was understood or stored.
     """
     with session_scope() as session:
-        intent = try_parse_expense_locally(session, text)
+        intent = try_parse_locally(session, text)
     if intent is not None:
-        logger.info("Handled locally (no LLM call): %r -> %s/%s %s", text, intent.amount, intent.currency, intent.category)
+        logger.info("Handled locally (no LLM call): %r -> %r", text, intent)
     else:
         intent = await parse_message(text)
 

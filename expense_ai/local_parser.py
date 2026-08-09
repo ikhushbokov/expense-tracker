@@ -1,5 +1,7 @@
-"""Cheap, deterministic local parser for the dominant case: a short plain-
-language expense message like "45k taxi" or "Spent 85,000 on groceries".
+"""Cheap, deterministic local parsers tried before the LLM for a handful of
+common, unambiguous message shapes: a plain expense ("45k taxi"), income
+("Salary came today: 6,500,000"), "undo/delete the last X", export, and
+chart requests.
 
 Model: the LLM should be the *fallback*, not the front door. Measured
 against this bot's own history, roughly 80% of expense messages use a
@@ -11,28 +13,41 @@ outage. More importantly, the field that actually matters for correctness
 -- the amount -- is extracted by regex instead of asked of a model that
 has, twice in one week on this exact bot, gotten arithmetic wrong.
 
-This is intentionally narrow and paranoid about false positives: it
-abstains (returns None, falling through to parse_message()/the LLM)
-whenever anything looks even slightly like a different intent (income, a
-balance correction, a transfer, a debt, an edit/delete, a question, ...),
-whenever more than one amount-like token appears, or whenever the
-category can't be resolved with real confidence from this user's own
-history. A wrong ABSTAIN just costs one ordinary LLM call. A wrong ACCEPT
-writes bad data -- so it only ever fires on the safe, common case.
+Every parser here is intentionally narrow and paranoid about false
+positives: it abstains (returns None, falling through to
+parse_message()/the LLM) whenever anything looks even slightly ambiguous
+or like a different intent. A wrong ABSTAIN just costs one ordinary LLM
+call. A wrong ACCEPT writes bad data (or deletes/exports the wrong thing)
+-- so each one only ever fires on its own safe, unambiguous case.
+Deliberately NOT covered, and why:
+  - transfer, savings_goal: near-zero real usage in this bot's history
+    (one real transfer ever, zero savings goals) -- not worth the design
+    and test effort for something practically unused.
+  - debt / settle_debt: would need reliably extracting a person's NAME
+    from free text, which is genuine named-entity recognition, not
+    something a regex should attempt with someone else's money on the
+    line.
+  - edit, search, free-text query, set_balance-by-text: all need
+    semantic judgment (which past entry does "the coffee expense" mean?
+    what does "how much did I spend" actually want?) -- this is where an
+    LLM's reasoning is doing real work, not just being expensive glue.
+  - history: already has a zero-LLM path (the /history command), so the
+    free-text version isn't worth building too.
 
-One explicit convention on top of the inferred-from-history path: if the
-LAST word left after the amount is removed exactly names one of the
-fixed CATEGORIES (case-insensitively -- "food", "Food", "FOOD" all
-count), it's taken as an explicit category override rather than fed into
-the keyword vote, and everything before it becomes the description. This
-skips _MIN_VOTES/tie-breaking entirely (there's no ambiguity to guess
-about when the user just said the category), so it works even with zero
-prior history -- "45k lunch food" resolves locally the very first time,
-not just once "lunch" has been seen twice. Deliberately NOT extended to
-inventing brand-new categories that aren't in CATEGORIES: the fixed list
-is used elsewhere (dashboard, charts) and deciding "is this worth a new
-category" isn't something this narrow a heuristic should judge -- that
-stays a parse_message()/LLM (or you, telling Claude to add one) decision.
+One explicit convention on top of the expense parser's inferred-from-
+history path: if the LAST word left after the amount is removed exactly
+names one of the fixed CATEGORIES (case-insensitively -- "food", "Food",
+"FOOD" all count), it's taken as an explicit category override rather
+than fed into the keyword vote, and everything before it becomes the
+description. This skips _MIN_VOTES/tie-breaking entirely (there's no
+ambiguity to guess about when the user just said the category), so it
+works even with zero prior history -- "45k lunch food" resolves locally
+the very first time, not just once "lunch" has been seen twice.
+Deliberately NOT extended to inventing brand-new categories that aren't
+in CATEGORIES: the fixed list is used elsewhere (dashboard, charts) and
+deciding "is this worth a new category" isn't something this narrow a
+heuristic should judge -- that stays a parse_message()/LLM (or you,
+telling Claude to add one) decision.
 
 Gated behind settings.local_parser_enabled so it can be A/B'd against
 real messages before being trusted -- see dispatch.py's build_response(),
@@ -48,7 +63,15 @@ from sqlalchemy.orm import Session
 
 from expense_ai.config import settings
 from expense_ai.database import repository
-from expense_ai.models.schemas import CATEGORIES, ExpenseIntent
+from expense_ai.models.schemas import (
+    CATEGORIES,
+    AnyIntent,
+    ChartIntent,
+    DeleteIntent,
+    ExpenseIntent,
+    ExportIntent,
+    IncomeIntent,
+)
 
 _CATEGORY_BY_LOWER = {c.lower(): c for c in CATEGORIES}
 
@@ -58,9 +81,17 @@ _CATEGORY_BY_LOWER = {c.lower(): c for c in CATEGORIES}
 # the closest thing to ground truth for how the LLM is told to tell them
 # apart. Checked against the message padded with a leading/trailing space,
 # so entries with surrounding spaces still match at the very start/end.
+# Income-specific phrasing ("salary", "got paid", ...) isn't here anymore
+# -- it's a positive trigger for _try_income below instead -- except
+# "paid me", which stays: "paid me back" (settle_debt) makes it too
+# ambiguous to positively trigger income, but it should still block a
+# misread as a plain expense either way. Similarly "delete"/"remove"/
+# "undo" and "export"/"chart"/etc. stay here too: _try_undo_last/
+# _try_export/_try_chart handle the confident, simple case earlier, and
+# this list is what stops anything more complex from falling through and
+# being misread as a brand new expense instead of reaching the LLM.
 _NON_EXPENSE_SIGNALS: tuple[str, ...] = (
-    # income
-    "salary", "paid me", "got paid", "payment came", "freelance", "income",
+    "paid me",
     # set_balance -- a *state*, not an event; must never be read as an expense
     " i have", "i've got", "i actually have", "actual balance", "my balance",
     "balance is", "total is", "saved up", "on my card",
@@ -78,6 +109,18 @@ _NON_EXPENSE_SIGNALS: tuple[str, ...] = (
     "export", " csv", "xlsx", " pdf", "chart", "graph", "history",
     # query
     "how much", "what did", "what's my", "when did", "why did",
+)
+
+_INCOME_TRIGGERS: tuple[str, ...] = ("salary", "got paid", "payment came", "freelance", "income", "bonus")
+
+_EXPORT_FORMAT_WORDS: tuple[tuple[str, str], ...] = (
+    ("csv", "csv"), ("xlsx", "xlsx"), ("excel", "xlsx"), ("json", "json"), ("pdf", "pdf"),
+)
+
+_CHART_TYPE_WORDS: tuple[tuple[str, str], ...] = (
+    ("pie", "category_pie"), ("category", "category_pie"),
+    ("weekly", "weekly_spending"), ("monthly", "monthly_spending"),
+    ("net worth", "balance_over_time"), ("trend", "balance_over_time"), ("balance", "balance_over_time"),
 )
 
 _MAGNITUDE = {"k": 1_000, "m": 1_000_000, "thousand": 1_000, "million": 1_000_000}
@@ -135,6 +178,14 @@ def _detect_currency(text: str) -> str | None:
     return None
 
 
+def _clean_description(text: str) -> str:
+    """Trim stray leading/trailing punctuation left over after removing an
+    amount from the middle of a sentence (e.g. "Salary came today: " ->
+    "Salary came today"), then capitalize the first letter."""
+    text = re.sub(r"^[\s:,.\-]+|[\s:,.\-]+$", "", text)
+    return text[0].upper() + text[1:] if text else ""
+
+
 def _split_explicit_category(remaining_text: str) -> tuple[str, str] | None:
     """If the last word of ``remaining_text`` exactly names one of the
     fixed CATEGORIES (case-insensitive), split it off as an explicit
@@ -148,12 +199,8 @@ def _split_explicit_category(remaining_text: str) -> tuple[str, str] | None:
     category = _CATEGORY_BY_LOWER.get(last_word)
     if category is None:
         return None
-    description = " ".join(words[:-1]).strip()
-    if description:
-        description = description[0].upper() + description[1:]
-    else:
-        description = category
-    return category, description
+    description = _clean_description(" ".join(words[:-1]))
+    return category, (description or category)
 
 
 def _build_category_keyword_map(session: Session) -> dict[str, Counter]:
@@ -199,24 +246,7 @@ def _resolve_category(session: Session, remaining_text: str) -> tuple[str, str] 
     return category, description
 
 
-def try_parse_expense_locally(session: Session, text: str) -> ExpenseIntent | None:
-    """Attempt to classify ``text`` as a plain expense without the LLM.
-    Returns None (abstain) for anything that isn't a confident,
-    unambiguous match -- the caller falls through to parse_message() in
-    that case. Never raises; this is a pure best-effort shortcut."""
-    if not settings.local_parser_enabled:
-        return None
-
-    stripped = text.strip()
-    if not stripped or stripped.endswith("?"):
-        return None
-    if len(stripped.split()) > _MAX_WORDS:
-        return None
-
-    padded = f" {stripped.lower()} "
-    if any(signal in padded for signal in _NON_EXPENSE_SIGNALS):
-        return None
-
+def _try_expense(session: Session, stripped: str) -> ExpenseIntent | None:
     extracted = _extract_amount(stripped)
     if extracted is None:
         return None
@@ -234,3 +264,110 @@ def try_parse_expense_locally(session: Session, text: str) -> ExpenseIntent | No
         category, description = resolved
 
     return ExpenseIntent(amount=amount, currency=currency, category=category, description=description)
+
+
+def _try_income(stripped: str, padded: str) -> IncomeIntent | None:
+    if not any(trigger in padded for trigger in _INCOME_TRIGGERS):
+        return None
+    extracted = _extract_amount(stripped)
+    if extracted is None:
+        return None
+    amount, remaining = extracted
+    currency = _detect_currency(stripped) or settings.default_currency
+    description = _clean_description(remaining) or "Income"
+    return IncomeIntent(amount=amount, currency=currency, description=description)
+
+
+def _try_undo_last(padded: str) -> DeleteIntent | None:
+    """Only the simple, unambiguous "undo/delete the last X" case -- any
+    mention of a specific amount/currency means there could be more than
+    one matching entry to disambiguate, which needs the LLM (or you,
+    being more specific)."""
+    if not any(word in padded for word in ("delete", "undo", "remove")):
+        return None
+    if "last" not in padded and "previous" not in padded:
+        return None
+    if any(ch.isdigit() for ch in padded):
+        return None
+
+    if "income" in padded:
+        target = "last_income"
+    elif "debt" in padded or "loan" in padded:
+        target = "last_debt"
+    elif any(word in padded for word in ("transfer", "adjustment", "correction", "balance", "savings")):
+        target = "last_transfer"
+    else:
+        target = "last_expense"
+    return DeleteIntent(target=target)
+
+
+def _try_export(padded: str) -> ExportIntent | None:
+    if "export" not in padded and "download" not in padded:
+        return None
+    fmt = next((code for word, code in _EXPORT_FORMAT_WORDS if word in padded), None)
+    if fmt is None:
+        return None  # ambiguous format -- let the LLM ask/decide
+
+    period = "all_time"
+    if "this week" in padded:
+        period = "this_week"
+    elif "this month" in padded:
+        period = "this_month"
+    elif "last month" in padded:
+        period = "last_month"
+    return ExportIntent(format=fmt, period=period)
+
+
+def _try_chart(padded: str) -> ChartIntent | None:
+    if "chart" not in padded and "graph" not in padded:
+        return None
+    chart_type = next((code for word, code in _CHART_TYPE_WORDS if word in padded), "category_pie")
+
+    period = "this_month"
+    if "this week" in padded:
+        period = "this_week"
+    elif "last month" in padded:
+        period = "last_month"
+    elif "all time" in padded or "all-time" in padded:
+        period = "all_time"
+    return ChartIntent(chart_type=chart_type, period=period)
+
+
+def try_parse_locally(session: Session, text: str) -> AnyIntent | None:
+    """Attempt to classify ``text`` locally, without the LLM, across the
+    handful of intent shapes covered here (expense, income, "undo/delete
+    the last X", export, chart). Returns None (abstain) for anything not
+    a confident, unambiguous match -- the caller falls through to
+    parse_message() in that case. Never raises; this is a pure
+    best-effort shortcut tried before the LLM."""
+    if not settings.local_parser_enabled:
+        return None
+
+    stripped = text.strip()
+    if not stripped or stripped.endswith("?"):
+        return None
+    if len(stripped.split()) > _MAX_WORDS:
+        return None
+
+    padded = f" {stripped.lower()} "
+
+    delete_intent = _try_undo_last(padded)
+    if delete_intent is not None:
+        return delete_intent
+
+    export_intent = _try_export(padded)
+    if export_intent is not None:
+        return export_intent
+
+    chart_intent = _try_chart(padded)
+    if chart_intent is not None:
+        return chart_intent
+
+    income_intent = _try_income(stripped, padded)
+    if income_intent is not None:
+        return income_intent
+
+    if any(signal in padded for signal in _NON_EXPENSE_SIGNALS):
+        return None
+
+    return _try_expense(session, stripped)

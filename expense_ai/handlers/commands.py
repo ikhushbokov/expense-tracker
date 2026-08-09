@@ -28,9 +28,11 @@ from expense_ai.finance import (
 )
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.debts import open_debts_keyboard, render_open_debts_text
+from expense_ai.handlers.edit_search import handle_export
 from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.income import render_month_income_text
 from expense_ai.keyboards import month_nav_keyboard, week_nav_keyboard
+from expense_ai.models.schemas import ExportIntent
 from expense_ai.periods import month_range, week_range, week_start
 from expense_ai.reports import category_pie_chart
 
@@ -57,7 +59,9 @@ WELCOME_MESSAGE = (
     "/chart — spending pie chart\n"
     "/dashboard — offline HTML dashboard (balances, trends, loans, goals)\n"
     "/history — day-by-day transaction log (◀/▶ to page through days)\n"
-    "/sync — sync tracked balance from a cards/accounts screenshot\n\n"
+    "/sync — sync tracked balance from a cards/accounts screenshot\n"
+    "/export [csv|xlsx|json|pdf] [this_week|this_month|last_month|all_time] "
+    "— export your data, e.g. /export xlsx this_month\n\n"
     "You can also send a photo of a receipt and I'll read it automatically, "
     "or a screenshot of your cards/accounts captioned \"sync\" to reconcile your balance.\n"
     "Type /help any time to see this again."
@@ -81,6 +85,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand("dashboard", "Offline HTML dashboard"),
     BotCommand("history", "Day-by-day transaction log"),
     BotCommand("sync", "Sync tracked balance from a cards screenshot"),
+    BotCommand("export", "Export your data (csv/xlsx/json/pdf)"),
     BotCommand("help", "Show usage help"),
 ]
 
@@ -235,3 +240,30 @@ async def handle_history_command(update: Update, context: ContextTypes.DEFAULT_T
     with session_scope() as session:
         text = render_day_text(session, day)
     await update.effective_message.reply_text(text, reply_markup=day_keyboard(day))
+
+
+_EXPORT_FORMATS = ("csv", "xlsx", "json", "pdf")
+_EXPORT_PERIODS = ("this_week", "this_month", "last_month", "all_time")
+
+
+@restrict_to_owner
+async def handle_export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    fmt, period = "csv", "all_time"
+    for arg in context.args or []:
+        arg = arg.lower()
+        if arg in _EXPORT_FORMATS:
+            fmt = arg
+        elif arg in _EXPORT_PERIODS:
+            period = arg
+        else:
+            await update.effective_message.reply_text(
+                "Usage: /export [csv|xlsx|json|pdf] [this_week|this_month|last_month|all_time]\n"
+                "e.g. /export xlsx this_month"
+            )
+            return
+    caption, file_path = handle_export(ExportIntent(format=fmt, period=period))
+    if file_path is None:
+        await update.effective_message.reply_text(caption)
+    else:
+        with file_path.open("rb") as f:
+            await update.effective_message.reply_document(document=f, filename=file_path.name, caption=caption)
