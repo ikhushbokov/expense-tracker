@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # Only meaningful for reasoning models (e.g. o-series, gpt-5.x). Left empty
     # to omit the parameter entirely for providers/models that don't support it.
     llm_reasoning_effort: str = Field(default="", alias="LLM_REASONING_EFFORT")
+    # Optional second provider tried only if the primary exhausts its own
+    # retries (see llm.py). Unset (default) means no fallback -- pure no-op,
+    # same behavior as before this existed. llm_model_fallback defaults to
+    # llm_model if left empty but a fallback URL is set.
+    llm_base_url_fallback: str = Field(default="", alias="LLM_BASE_URL_FALLBACK")
+    llm_api_key_fallback: str = Field(default="", alias="LLM_API_KEY_FALLBACK")
+    llm_model_fallback: str = Field(default="", alias="LLM_MODEL_FALLBACK")
     # How often (seconds) to retry messages queued while the LLM was down.
     retry_queue_interval_seconds: float = Field(default=60.0, alias="RETRY_QUEUE_INTERVAL_SECONDS")
     # Try expense_ai.local_parser first for plain-language expense messages
