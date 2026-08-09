@@ -172,3 +172,46 @@ def test_abstains_on_long_message():
 def test_abstains_with_no_history_at_all():
     with session_scope() as s:
         assert local_parser.try_parse_expense_locally(s, "45000 taxi") is None
+
+
+def test_explicit_trailing_category_works_with_zero_history():
+    """The whole point of an explicit category word: no need for
+    _MIN_VOTES worth of prior history, unlike inferred categorization."""
+    with session_scope() as s:
+        intent = local_parser.try_parse_expense_locally(s, "45000 lunch food")
+    assert intent is not None
+    assert intent.category == "Food"
+    assert intent.description == "Lunch"
+
+
+def test_explicit_category_is_case_insensitive():
+    with session_scope() as s:
+        intent = local_parser.try_parse_expense_locally(s, "45000 lunch FOOD")
+    assert intent.category == "Food"
+
+
+def test_explicit_category_with_multi_word_description():
+    with session_scope() as s:
+        intent = local_parser.try_parse_expense_locally(s, "1000000 university contract education")
+    assert intent is not None
+    assert intent.category == "Education"
+    assert intent.description == "University contract"
+
+
+def test_explicit_category_with_no_description_words_falls_back_to_category_name():
+    with session_scope() as s:
+        intent = local_parser.try_parse_expense_locally(s, "45000 other")
+    assert intent is not None
+    assert intent.category == "Other"
+    assert intent.description == "Other"
+
+
+def test_trailing_word_that_is_not_a_category_falls_through_to_inference():
+    """"drink" isn't one of CATEGORIES, so "cold drink" stays a single
+    description phrase resolved via history, same as before this feature."""
+    _seed_history()
+    with session_scope() as s:
+        intent = local_parser.try_parse_expense_locally(s, "20000 cold drink")
+    assert intent is not None
+    assert intent.category == "Food"
+    assert intent.description == "Cold Drink"

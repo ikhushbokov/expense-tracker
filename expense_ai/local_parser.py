@@ -20,9 +20,23 @@ category can't be resolved with real confidence from this user's own
 history. A wrong ABSTAIN just costs one ordinary LLM call. A wrong ACCEPT
 writes bad data -- so it only ever fires on the safe, common case.
 
-Gated behind settings.local_parser_enabled (default off) so it can be
-A/B'd against real messages before being trusted -- see dispatch.py's
-build_response(), the only call site.
+One explicit convention on top of the inferred-from-history path: if the
+LAST word left after the amount is removed exactly names one of the
+fixed CATEGORIES (case-insensitively -- "food", "Food", "FOOD" all
+count), it's taken as an explicit category override rather than fed into
+the keyword vote, and everything before it becomes the description. This
+skips _MIN_VOTES/tie-breaking entirely (there's no ambiguity to guess
+about when the user just said the category), so it works even with zero
+prior history -- "45k lunch food" resolves locally the very first time,
+not just once "lunch" has been seen twice. Deliberately NOT extended to
+inventing brand-new categories that aren't in CATEGORIES: the fixed list
+is used elsewhere (dashboard, charts) and deciding "is this worth a new
+category" isn't something this narrow a heuristic should judge -- that
+stays a parse_message()/LLM (or you, telling Claude to add one) decision.
+
+Gated behind settings.local_parser_enabled so it can be A/B'd against
+real messages before being trusted -- see dispatch.py's build_response(),
+the only call site.
 """
 
 from __future__ import annotations
@@ -34,7 +48,9 @@ from sqlalchemy.orm import Session
 
 from expense_ai.config import settings
 from expense_ai.database import repository
-from expense_ai.models.schemas import ExpenseIntent
+from expense_ai.models.schemas import CATEGORIES, ExpenseIntent
+
+_CATEGORY_BY_LOWER = {c.lower(): c for c in CATEGORIES}
 
 # Substrings that strongly suggest a different intent than a plain expense --
 # if any of these appear, abstain rather than guess. Mined from the exact
@@ -119,6 +135,27 @@ def _detect_currency(text: str) -> str | None:
     return None
 
 
+def _split_explicit_category(remaining_text: str) -> tuple[str, str] | None:
+    """If the last word of ``remaining_text`` exactly names one of the
+    fixed CATEGORIES (case-insensitive), split it off as an explicit
+    category override. Returns (category, description) with that word
+    removed and the rest capitalized, or None if the last word doesn't
+    name a category -- callers fall through to history-based inference."""
+    words = remaining_text.split()
+    if not words:
+        return None
+    last_word = re.sub(r"[^\w']", "", words[-1]).lower()
+    category = _CATEGORY_BY_LOWER.get(last_word)
+    if category is None:
+        return None
+    description = " ".join(words[:-1]).strip()
+    if description:
+        description = description[0].upper() + description[1:]
+    else:
+        description = category
+    return category, description
+
+
 def _build_category_keyword_map(session: Session) -> dict[str, Counter]:
     """token -> {category: times this user's own history used it for that
     category}. Rebuilt fresh each call: at personal-bot volume (a couple
@@ -187,9 +224,13 @@ def try_parse_expense_locally(session: Session, text: str) -> ExpenseIntent | No
 
     currency = _detect_currency(stripped) or settings.default_currency
 
-    resolved = _resolve_category(session, remaining)
-    if resolved is None:
-        return None
-    category, description = resolved
+    explicit = _split_explicit_category(remaining)
+    if explicit is not None:
+        category, description = explicit
+    else:
+        resolved = _resolve_category(session, remaining)
+        if resolved is None:
+            return None
+        category, description = resolved
 
     return ExpenseIntent(amount=amount, currency=currency, category=category, description=description)
