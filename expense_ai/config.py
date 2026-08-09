@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     llm_reasoning_effort: str = Field(default="", alias="LLM_REASONING_EFFORT")
     # How often (seconds) to retry messages queued while the LLM was down.
     retry_queue_interval_seconds: float = Field(default=60.0, alias="RETRY_QUEUE_INTERVAL_SECONDS")
+    # Try expense_ai.local_parser first for plain-language expense messages
+    # (regex amount + history-derived category, no LLM call) before falling
+    # back to the LLM. Off by default -- see local_parser.py's docstring for
+    # why, and flip on to A/B it once you're comfortable with its behavior.
+    local_parser_enabled: bool = Field(default=False, alias="LOCAL_PARSER_ENABLED")
 
     # --- Scheduled jobs (handlers/scheduled.py, handlers/backup.py) -------
     # Hour of day (0-23, in `timezone`) the daily recap and month-end summary
