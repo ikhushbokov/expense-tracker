@@ -20,7 +20,6 @@ from expense_ai.database.models import (
     PendingMessage,
     PendingMissedTransaction,
     PendingSync,
-    Receipt,
     Transfer,
 )
 
@@ -158,25 +157,6 @@ def add_custom_category(session: Session, name: str) -> CustomCategory:
 def list_custom_category_names(session: Session) -> list[str]:
     stmt = select(CustomCategory.name).order_by(CustomCategory.created_at.asc())
     return list(session.scalars(stmt).all())
-
-
-def attach_receipt(
-    session: Session,
-    *,
-    expense_id: int,
-    merchant: str = "",
-    raw_text: str = "",
-    image_path: str = "",
-) -> Receipt:
-    receipt = Receipt(
-        expense_id=expense_id,
-        merchant=merchant,
-        raw_text=raw_text,
-        image_path=image_path,
-    )
-    session.add(receipt)
-    session.flush()
-    return receipt
 
 
 def get_expense(session: Session, expense_id: int) -> Expense | None:

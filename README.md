@@ -1,27 +1,34 @@
 # Expense AI — AI-Powered Telegram Expense Tracker
 
 A personal finance assistant you talk to like a human, over Telegram.
-Send it a message like *"Spent 85,000 on groceries"* or *"How much did I
-spend this month?"* and it understands, categorizes, stores, and answers
-— powered by an LLM you configure (OpenAI, OpenRouter, Ollama, vLLM, or
-any OpenAI-compatible endpoint).
+Send it a message like *"Spent 85,000 on groceries"* and it understands,
+categorizes, and stores it — most common messages are handled instantly
+with no LLM call at all (see `local_parser.py`); an LLM you configure
+(OpenAI, OpenRouter, Ollama, vLLM, or any OpenAI-compatible endpoint)
+is the fallback for anything less common.
 
 ```
 "Spent 85,000 UZS on groceries."        -> recorded as an expense, categorized "Food"
 "Salary came today: 6,500,000 UZS."     -> recorded as income
-"How much did I spend this month?"      -> natural-language query, answered from SQLite
 "Show me a pie chart of this month"     -> chart image sent back
 ```
+
+Read-only questions (balance, summaries, totals) go through slash commands
+(`/budget`, `/today`, `/month`, `/total`, `/biggest`, ...) rather than
+free text — instant, and no LLM involved.
 
 ---
 
 ## Features
 
 - **Natural language** expense & income logging — no commands required.
-- **LLM-driven intent understanding** — pluggable across OpenAI, OpenRouter,
-  Ollama, vLLM, LM Studio, or any OpenAI-compatible server.
-- **SQLite storage** (via SQLAlchemy) — expenses, income, and OCR'd receipt
-  metadata.
+- **Local-first parsing**: a plain expense/income message, "undo the last
+  X", export, and chart requests are recognized instantly with regex and
+  your own history, no LLM call needed. An LLM (pluggable across OpenAI,
+  OpenRouter, Ollama, vLLM, LM Studio, or any OpenAI-compatible server)
+  handles anything that doesn't match — editing/deleting a specific past
+  entry, balance corrections, and anything genuinely unusual.
+- **SQLite storage** (via SQLAlchemy).
 - **Automatic categorization** into a starting set of categories (Food,
   Transport, Gym, Supplements, Health, Entertainment, Shopping, Education,
   Bills, Rent, Restaurants, Electronics, Subscriptions, Travel, Family,
@@ -36,7 +43,6 @@ any OpenAI-compatible endpoint).
 - **Running balance** (income − expenses), tracked per currency.
 - **Monthly/weekly/daily summaries** with category breakdowns and
   percentages.
-- **Receipt photo OCR** (Tesseract) → LLM classification → stored expense.
 - **Editing & deletion**: "Undo the last expense", "Change groceries to
   95,000", "Delete today's taxi" — entries are found by keyword, category,
   or date, not just "the last one".
@@ -101,7 +107,6 @@ expense_tracker/
 │   ├── finance.py              # Balance / summary / category math
 │   ├── periods.py               # "this_month" -> (start, end) resolution
 │   ├── keyboards.py               # Shared month/week ◀/▶ pagination keyboards
-│   ├── ocr.py                   # Tesseract receipt OCR
 │   ├── reports.py               # matplotlib chart generation
 │   ├── history.py                # Day-by-day ledger (expenses/income/transfers)
 │   ├── income.py                  # Month-by-month income log
@@ -116,8 +121,7 @@ expense_tracker/
 │   │   ├── common.py               # Owner-only access guard
 │   │   ├── commands.py              # /start, /help, /history, /income, /category, /dashboard, quick commands
 │   │   ├── text.py                   # Routes text messages by intent
-│   │   ├── photo.py                   # Receipt photo -> OCR -> expense
-│   │   ├── queries.py                  # Read-only Q&A (balance, summaries...)
+│   │   ├── photo.py                   # Routes /sync screenshots; other photos get a hint to type instead
 │   │   ├── edit_search.py               # Edit / delete / search / export
 │   │   ├── history.py                    # /history Prev/Next pagination callback
 │   │   ├── income.py                      # /income Prev/Next pagination callback
@@ -125,7 +129,7 @@ expense_tracker/
 │   │   ├── scheduled.py                    # Proactive daily/month-end/reconciliation jobs
 │   │   └── backup.py                       # Periodic DB backup sent as a Telegram document
 │   └── tests/                    # pytest suite
-├── data/                       # SQLite DB + downloaded receipt photos (gitignored)
+├── data/                       # SQLite DB (gitignored)
 ├── exports/                    # Generated CSV/XLSX/JSON/PDF/PNG files (gitignored)
 ├── logs/                       # Rotating log files (gitignored)
 ├── requirements.txt
@@ -140,12 +144,6 @@ expense_tracker/
 ### 1. Prerequisites
 
 - Python 3.12+
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) installed
-  and on your `PATH` (for receipt photo support):
-  ```bash
-  sudo apt install tesseract-ocr   # Debian/Ubuntu
-  brew install tesseract           # macOS
-  ```
 - A Telegram bot token from [@BotFather](https://t.me/BotFather).
 
 ### 2. Install
@@ -174,7 +172,6 @@ Edit `.env`:
 | `DATABASE_PATH` | Path to the SQLite file (default `data/expenses.db`) |
 | `DEFAULT_CURRENCY` | Currency assumed when the user doesn't mention one |
 | `TZ` | IANA timezone (e.g. `Asia/Tashkent`). **Set this explicitly for Docker** — a container's clock is UTC by default regardless of the host machine's timezone, which otherwise makes every date/time the bot shows off by your UTC offset. |
-| `TESSERACT_CMD` | Path to the `tesseract` binary if not on `PATH` |
 
 #### Switching LLM providers
 
@@ -231,12 +228,10 @@ includes month-over-month insights), `/income` (this month's income, with
 - "Salary came today: 6,500,000 UZS."
 - "Freelance payment 350 dollars."
 
-**Querying:**
-- "How much did I spend today?"
-- "Show food expenses this month."
-- "Biggest expenses this month?"
-- "Current balance?"
-- "Summarize June."
+**Querying:** there's no free-text query intent — balance/spending
+questions ("how much did I spend today?", "current balance?") always go
+through the quick commands above instead, so they're instant and need no
+LLM call.
 
 **Editing:**
 - "Undo the last expense."
@@ -256,9 +251,6 @@ includes month-over-month insights), `/income` (this month's income, with
 **Charts:**
 - "Show me a pie chart of this month's spending."
 - "Show my monthly spending chart."
-
-**Receipts:** just send a photo of a receipt — the bot OCRs it, asks the
-LLM to classify it, and records the expense automatically.
 
 **Balance & savings:**
 - "My current balance is: I have two cards, 9710 card: 411k, 3901 card: 629k."
@@ -336,9 +328,6 @@ The architecture is designed so these can be added without restructuring:
 
 - **"This bot is private."** — Set `TELEGRAM_ALLOWED_USER_ID` to your own
   ID, or leave it blank during testing.
-- **OCR returns garbage / empty text** — make sure `tesseract-ocr` is
-  installed and `TESSERACT_CMD` points to the right binary; try a
-  clearer, well-lit, non-blurry photo.
 - **LLM returns non-JSON / errors** — check `LLM_BASE_URL` and
   `LLM_MODEL` match what your provider expects; check `logs/bot.log` for
   the raw response.

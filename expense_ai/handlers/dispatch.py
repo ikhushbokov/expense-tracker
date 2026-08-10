@@ -20,7 +20,6 @@ from expense_ai.database import repository, session_scope
 from expense_ai.finance import coerce_category, format_amount, get_balances, known_categories, reconcile_balance, transfer_funds
 from expense_ai.handlers.common import restrict_to_owner
 from expense_ai.handlers.edit_search import handle_delete, handle_edit, handle_export, handle_search
-from expense_ai.handlers.queries import handle_query
 from expense_ai.history import day_keyboard, render_day_text
 from expense_ai.local_parser import try_parse_locally
 from expense_ai.models.schemas import (
@@ -29,7 +28,6 @@ from expense_ai.models.schemas import (
     EditIntent,
     ExportIntent,
     HistoryIntent,
-    QueryIntent,
     SearchIntent,
     SetBalanceIntent,
     TransferIntent,
@@ -43,11 +41,11 @@ logger = logging.getLogger(__name__)
 ACCOUNT_LABELS = {"balance": "Balance", "savings": "Savings"}
 
 UNKNOWN_MESSAGE = (
-    "I couldn't understand that as an expense, income entry, or question.\n"
+    "I couldn't understand that as an expense or income entry.\n"
     "Try something like:\n"
     "• \"Spent 85,000 on groceries\"\n"
     "• \"Salary came today: 6,500,000\"\n"
-    "• \"How much did I spend this month?\""
+    "Or check /help for the full list of commands (balance, summaries, search, ...)."
 )
 
 
@@ -202,10 +200,6 @@ async def build_response(text: str) -> BotResponse:
             f"Savings: {format_amount(new_balances['savings'].get(intent.currency, 0.0), intent.currency)}"
         )
         return BotResponse(text=text_reply)
-
-    if intent.type == "query":
-        assert isinstance(intent, QueryIntent)
-        return BotResponse(text=handle_query(intent))
 
     if intent.type == "edit":
         assert isinstance(intent, EditIntent)

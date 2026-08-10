@@ -62,8 +62,9 @@ one — `finance.known_categories(session)` is the actual source of truth
 are **not** validated/coerced in `ExpenseIntent`/`EditIntent` themselves
 (a stateless Pydantic validator can't see custom categories) — every
 caller that stores a category (`dispatch.py`'s "expense" branch,
-`photo.py`'s receipt flow, `edit_search.py`'s edit handling) is expected
-to run it through `finance.coerce_category(session, category)` first.
+`edit_search.py`'s edit handling, `balance_sync.py`'s missed-transaction
+flow) is expected to run it through `finance.coerce_category(session,
+category)` first.
 New categories are only ever created by explicit `/category add` command
 — never invented by the LLM or guessed by `local_parser.py`; deciding
 "is this worth its own category" is a call left to the user.
@@ -81,6 +82,17 @@ writes bad data), and when an expense's category can't be confidently
 resolved it still doesn't call the LLM — it logs the expense as "Other"
 with `category_confirmed=False`, and `dispatch.py` attaches a one-tap
 recategorize keyboard instead of asking the LLM to guess.
+
+There used to be a free-text `query` intent (read-only "how much did I
+spend"/"what's my balance" questions) and a receipt-photo OCR → LLM
+classification flow (`ocr.py`, `Receipt` model). Both were removed: the
+owner uses the equivalent slash commands (`/budget`, `/today`, `/month`,
+`/total`, `/biggest`, ...) instead of free-text queries, and always types
+expenses directly rather than photographing receipts. `handlers/photo.py`
+now only routes `/sync` screenshots (see `balance_sync.py`) and points any
+other photo back to typing the expense. Don't reintroduce either without
+checking this is still true — see the "Product preferences" section below
+for the general LLM-minimization direction this bot is moving in.
 
 ### Resilience / outage queue
 
@@ -205,3 +217,17 @@ docker compose up -d --build              # run in Docker (restart: unless-stopp
   `LLM_MODEL` in `.env`, default `gpt-4o-mini` in `config.py`). Don't
   casually suggest swapping to a more expensive model without flagging
   the cost tradeoff.
+- Ongoing direction: minimize LLM usage generally, not just cost per call
+  — features get moved to `local_parser.py` or plain slash commands
+  whenever a shape is common/deterministic enough (see git history around
+  the Debt/SavingsGoal removal, `/category`, and the free-text query/
+  receipt-OCR removal for the pattern). When a feature is genuinely
+  free-text/open-ended in a way a command can't replace (e.g. a totally
+  novel message that doesn't fit any known shape), the LLM stays as a
+  last-resort fallback rather than being ripped out — the goal is fewer
+  calls in the common path, not zero LLM infrastructure. Financial writes
+  with no confirmation step before applying (e.g. `set_balance`) are
+  intentionally kept on the LLM rather than a local parser even where one
+  would be technically easy to write — a locally-misparsed amount there
+  would silently corrupt the tracked balance with nothing to catch it,
+  unlike a miscategorized expense (which just needs a tap to fix).

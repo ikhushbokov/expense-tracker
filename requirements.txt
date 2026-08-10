@@ -4,7 +4,6 @@ pydantic==2.10.4
 pydantic-settings==2.7.0
 openai==1.58.1
 python-dotenv==1.0.1
-pytesseract==0.3.13
 Pillow==11.0.0
 openpyxl==3.1.5
 matplotlib==3.10.0

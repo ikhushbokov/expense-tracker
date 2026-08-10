@@ -36,7 +36,6 @@ CATEGORIES: list[str] = [
 IntentType = Literal[
     "expense",
     "income",
-    "query",
     "edit",
     "delete",
     "search",
@@ -96,30 +95,6 @@ class IncomeIntent(LLMIntentBase):
     @classmethod
     def _upper_currency(cls, v: str) -> str:
         return v.upper().strip() if v else "UZS"
-
-
-class QueryIntent(LLMIntentBase):
-    """A read-only natural language question (balance, summary, totals...)."""
-
-    type: Literal["query"] = "query"
-    query_kind: Literal[
-        "balance",
-        "summary",
-        "total_by_period",
-        "total_by_category",
-        "biggest_expenses",
-        "total_income",
-        "other",
-    ] = "other"
-    period: Literal["today", "yesterday", "this_week", "this_month", "last_month", "all_time", "custom"] = "all_time"
-    category: str | None = None
-    custom_start: dt.date | None = None
-    custom_end: dt.date | None = None
-    limit: int = 5
-    # Which money bucket a "balance" question is about: the day-to-day
-    # spendable "balance", the "savings" set aside, or "total" (both
-    # combined / net worth). Only meaningful when query_kind == "balance".
-    account: Literal["balance", "savings", "total"] = "balance"
 
 
 class SetBalanceIntent(LLMIntentBase):
@@ -253,7 +228,6 @@ class UnknownIntent(LLMIntentBase):
 AnyIntent = (
     ExpenseIntent
     | IncomeIntent
-    | QueryIntent
     | SetBalanceIntent
     | TransferIntent
     | EditIntent
@@ -268,7 +242,6 @@ AnyIntent = (
 INTENT_MODELS: dict[str, type[BaseModel]] = {
     "expense": ExpenseIntent,
     "income": IncomeIntent,
-    "query": QueryIntent,
     "set_balance": SetBalanceIntent,
     "transfer": TransferIntent,
     "edit": EditIntent,

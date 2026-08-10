@@ -1,9 +1,9 @@
 """Centralized, typed configuration loaded from environment variables / .env.
 
-Every tunable value (Telegram token, LLM endpoint, database path, OCR
-settings, ...) lives here so the rest of the codebase never hardcodes
-secrets or paths. Import the module-level ``settings`` instance anywhere
-configuration is needed.
+Every tunable value (Telegram token, LLM endpoint, database path, ...)
+lives here so the rest of the codebase never hardcodes secrets or paths.
+Import the module-level ``settings`` instance anywhere configuration is
+needed.
 """
 
 from __future__ import annotations
@@ -75,10 +75,6 @@ class Settings(BaseSettings):
     # container's system clock is UTC by default regardless of the host
     # machine's timezone (see bot.py's use of this at startup).
     timezone: str = Field(default="UTC", alias="TZ")
-
-    # --- OCR ------------------------------------------------------------
-    tesseract_cmd: str = Field(default="tesseract", alias="TESSERACT_CMD")
-    ocr_languages: str = Field(default="eng", alias="OCR_LANGUAGES")
 
     # --- Logging --------------------------------------------------------
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

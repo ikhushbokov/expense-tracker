@@ -81,15 +81,6 @@ Return JSON with a "type" field set to exactly one of:
   Do NOT use "transfer" just because a message mentions an account and an
   amount -- see the "delete"/"edit" note below for the "undo a mistake"
   case, which looks similar but means something different.
-- "query": a read-only question about balance/spending/income. Fields:
-  query_kind (one of: balance, summary, total_by_period, total_by_category,
-  biggest_expenses, total_income, other), period (today, yesterday,
-  this_week, this_month, last_month, all_time, custom), category (if
-  asking about a specific category, else null), limit (integer, for
-  "biggest expenses" style queries, default 5), account (only for
-  query_kind "balance": "balance" for the normal balance/budget question,
-  "savings" if asking specifically about savings, "total" if asking for
-  net worth / total money / balance and savings combined).
 - "edit": user wants to modify a previous entry. Fields: target
   (last_expense, last_income, last_transfer, or search), keyword (to find
   the entry if target is "search", else null), period (today, yesterday,
@@ -140,13 +131,18 @@ Return JSON with a "type" field set to exactly one of:
 - "history": user wants to see an itemized day-by-day log of what
   happened (individual expenses/income/transfers, not just totals) --
   e.g. "show me my history", "what did I do on July 1st", "let me see
-  last week's transactions". Do NOT use this for "how much did I spend"
-  style totals -- that's "query" with query_kind "summary". Fields:
-  period (today, yesterday, this_week, this_month, last_month; default
-  "today" -- used as a starting day if the user doesn't name an exact
-  date), custom_date (an exact date if they name one, e.g. "July 1st" or
-  "yesterday's log for June 3rd" -> that date; null otherwise).
+  last week's transactions". Fields: period (today, yesterday, this_week,
+  this_month, last_month; default "today" -- used as a starting day if
+  the user doesn't name an exact date), custom_date (an exact date if
+  they name one, e.g. "July 1st" or "yesterday's log for June 3rd" ->
+  that date; null otherwise).
 - "unknown": message doesn't match any of the above. Fields: reason.
+  There is deliberately no read-only "what's my balance"/"how much did I
+  spend" query intent anymore -- those are handled by dedicated slash
+  commands (/budget, /today, /week, /month, /total, /biggest) instead, so
+  classify plain balance/spending/income questions as "unknown" too
+  (reason: "use a slash command") rather than forcing them into "search"
+  or another intent that doesn't fit.
 
 Rules:
 - If no currency is mentioned, use "{currency}".
@@ -160,8 +156,8 @@ Rules:
   spam or abuse -- be generous, not suspicious. If a message is unusual,
   informal, or doesn't perfectly match the phrasing in these examples,
   still map it to the closest matching intent above rather than giving
-  up. Only use "unknown" when the message truly isn't about money/finance
-  at all (e.g. small talk, or a question you have no data for).
+  up -- except read-only balance/spending questions, which are always
+  "unknown" now per the note above, no matter how they're phrased.
 - Respond with raw JSON only, no markdown fences, no commentary.
 """
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import DateTime, Float, Integer, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
@@ -30,10 +30,6 @@ class Expense(Base):
     # always "balance" -- moving money into/out of savings goes through
     # Transfer, not this field.
     account: Mapped[str] = mapped_column(String(32), default="balance", server_default="balance")
-
-    receipt: Mapped["Receipt | None"] = relationship(
-        back_populates="expense", cascade="all, delete-orphan", uselist=False
-    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Expense id={self.id} amount={self.amount} {self.currency} category={self.category!r}>"
@@ -171,17 +167,3 @@ class CustomCategory(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<CustomCategory name={self.name!r}>"
-
-
-class Receipt(Base):
-    """OCR metadata for a receipt photo linked to an expense (Phase 2)."""
-
-    __tablename__ = "receipts"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    expense_id: Mapped[int] = mapped_column(ForeignKey("expenses.id"), unique=True)
-    merchant: Mapped[str] = mapped_column(String(255), default="")
-    raw_text: Mapped[str] = mapped_column(String, default="")
-    image_path: Mapped[str] = mapped_column(String(500), default="")
-
-    expense: Mapped[Expense] = relationship(back_populates="receipt")
