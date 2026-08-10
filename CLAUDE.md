@@ -203,9 +203,30 @@ to vary (a new API key, a new path, ...), add it to the "patch fields on
 ```bash
 source .venv/bin/activate
 python -m pytest expense_ai/tests/ -v     # run tests (isolated temp SQLite, never touches data/expenses.db)
-python -m expense_ai.bot                  # run the bot directly
-docker compose up -d --build              # run in Docker (restart: unless-stopped)
+python -m expense_ai.bot                  # run the bot in the foreground
 ```
+
+**Deployment is a launchd agent, not Docker** (`deploy/com.expense-ai.bot.plist.example`
+→ `~/Library/LaunchAgents/com.expense-ai.bot.plist`). `RunAtLoad` +
+`KeepAlive` are the equivalent of `restart: unless-stopped`, verified by
+`kill -9`ing it and watching launchd relaunch it. Docker Desktop was
+dropped because it cost ~3.1GB of RAM (a ~1.2GB Linux VM plus a ~1.9GB
+Electron dashboard) to run a 131MB Python process; nothing here needs
+containers — it's one process and a SQLite file. The `Dockerfile` and
+`docker-compose.yml` are kept as a still-working alternative, so changes
+to dependencies should stay reflected in both.
+
+```bash
+launchctl list | grep expense-ai                                  # PID + last exit status
+launchctl unload ~/Library/LaunchAgents/com.expense-ai.bot.plist   # stop
+launchctl load   ~/Library/LaunchAgents/com.expense-ai.bot.plist   # start
+tail -f logs/bot.log                                              # app log
+```
+
+Restarting after a code change is `unload` + `load` (there's no
+auto-reload). The venv must be Python 3.12 — 3.14 is the machine's
+default `python3`, and the OCR wheels (`onnxruntime`, `opencv`) are only
+verified on 3.12, which is also what the Dockerfile pins.
 
 ## Conventions
 

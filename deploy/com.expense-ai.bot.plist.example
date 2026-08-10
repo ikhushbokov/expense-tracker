@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for running the bot natively on macOS, as an alternative to
+  Docker (see README's "Running natively on macOS" section).
+
+  RunAtLoad + KeepAlive together are the equivalent of docker-compose's
+  `restart: unless-stopped`: started at login, and relaunched if it ever
+  exits for any reason. ThrottleInterval keeps a crash-loop from spinning.
+
+  This is a LaunchAgent, so it runs when you're logged in -- the same
+  practical condition Docker Desktop needed. It also sleeps when the Mac
+  sleeps, exactly as the container did.
+
+  Copy to ~/Library/LaunchAgents/com.expense-ai.bot.plist and replace
+  __PROJECT_DIR__ with the absolute path to your checkout, then:
+      launchctl load ~/Library/LaunchAgents/com.expense-ai.bot.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.expense-ai.bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJECT_DIR__/.venv/bin/python</string>
+        <string>-m</string>
+        <string>expense_ai.bot</string>
+    </array>
+
+    <!-- config.py resolves .env, data/ and logs/ relative to the project
+         root, and card_ocr.py spawns its OCR subprocess from the package
+         directory, so this must be the checkout itself. -->
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_DIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Startup/crash output only; the bot's own rotating log is logs/bot.log. -->
+    <key>StandardOutPath</key>
+    <string>__PROJECT_DIR__/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_DIR__/logs/launchd.err.log</string>
+</dict>
+</plist>

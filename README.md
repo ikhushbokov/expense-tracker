@@ -96,8 +96,9 @@ free text — instant, and no LLM involved.
   queue, and automatically retries every `RETRY_QUEUE_INTERVAL_SECONDS`
   (default 60s) once the LLM is back — you get the normal confirmation
   reply, just delayed, prefixed to make clear it was queued.
-- **Docker packaging**: `docker compose up -d` with `restart: unless-stopped`
-  so the bot survives reboots as long as Docker itself starts on boot.
+- **Runs as a background service**: a launchd agent on macOS (~130MB, starts
+  at login, relaunched automatically if it ever exits), or via Docker with
+  `restart: unless-stopped` — both survive reboots; see Run below.
 
 ---
 
@@ -138,6 +139,7 @@ expense_tracker/
 │   │   ├── scheduled.py                    # Proactive daily/month-end/reconciliation jobs
 │   │   └── backup.py                       # Periodic DB backup sent as a Telegram document
 │   └── tests/                    # pytest suite
+├── deploy/                     # launchd agent template for running as a service
 ├── data/                       # SQLite DB (gitignored)
 ├── exports/                    # Generated CSV/XLSX/JSON/PDF/PNG files (gitignored)
 ├── logs/                       # Rotating log files (gitignored)
@@ -209,21 +211,45 @@ To find your Telegram user ID, message [@userinfobot](https://t.me/userinfobot).
 
 ### 4. Run
 
-**Directly:**
+**In the foreground** (for development):
 ```bash
 python -m expense_ai.bot
 ```
 
-**Or with Docker (recommended for always-on use):**
+**As a background service on macOS (recommended for always-on use):**
+
+```bash
+sed "s|__PROJECT_DIR__|$PWD|g" deploy/com.expense-ai.bot.plist.example \
+  > ~/Library/LaunchAgents/com.expense-ai.bot.plist
+launchctl load ~/Library/LaunchAgents/com.expense-ai.bot.plist
+```
+
+`RunAtLoad` + `KeepAlive` in that plist mean the bot starts when you log in
+and is relaunched automatically if it ever exits — the same guarantee
+`restart: unless-stopped` gives in Docker, for ~130MB instead of the ~3.1GB
+Docker Desktop costs on macOS (a Linux VM plus an Electron dashboard, to run
+one Python process). Manage it with:
+
+```bash
+launchctl list | grep expense-ai      # PID and last exit status
+tail -f logs/bot.log                  # what it's doing
+```
+
+To stop it, or to restart after changing the code:
+```bash
+launchctl unload ~/Library/LaunchAgents/com.expense-ai.bot.plist
+```
+
+**Or with Docker**, which still works and is the better option on a Linux
+server (where Docker has no VM/GUI overhead):
 ```bash
 docker compose up -d --build
 ```
-This runs the bot in a container with `restart: unless-stopped`, so as long
-as Docker itself is enabled at boot (`systemctl enable docker`, which is the
-default on most distros), the bot comes back automatically after every
-reboot. Data/logs/exports are bind-mounted to `./data`, `./logs`,
-`./exports` so nothing lives only inside the container. Check on it with
-`docker compose logs -f` / `docker compose ps`.
+`restart: unless-stopped` brings it back after a reboot as long as Docker
+starts at boot. Data/logs/exports are bind-mounted to `./data`, `./logs`,
+`./exports`, so the SQLite database is the same file either way and you can
+switch between the two freely — just don't run both at once, since two
+pollers on one bot token conflict.
 
 The bot initializes the SQLite database automatically on first run and
 starts polling for Telegram messages.
