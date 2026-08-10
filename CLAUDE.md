@@ -83,6 +83,36 @@ resolved it still doesn't call the LLM — it logs the expense as "Other"
 with `category_confirmed=False`, and `dispatch.py` attaches a one-tap
 recategorize keyboard instead of asking the LLM to guess.
 
+### Local `/sync` screenshot OCR (`card_ocr.py`)
+
+`handlers/balance_sync.py` tries `card_ocr.extract_card_read` before its
+vision-LLM call, so a `/sync` normally costs nothing and keeps working
+during an outage. Two design points that are load-bearing and were both
+settled by measurement (numbers in that module's docstring):
+
+- **RapidOCR (PP-OCRv4 via onnxruntime), not Tesseract.** Tesseract
+  misreads digits on this app's font in a consistent `3`→`5` way in every
+  configuration tried, and once dropped a whole card line; RapidOCR read
+  all 12 amounts and 4 card numbers exactly across three real screenshots,
+  cropped *or* full-frame — so no crop geometry is assumed, only the `sum`
+  suffix every balance carries.
+- **It runs as a short-lived subprocess** (`python -m expense_ai.card_ocr`),
+  not in-process. onnxruntime never gives memory back within a process
+  (`del engine; gc.collect()` recovered 8MB of 168MB), and inference is
+  ~1.1s of CPU that would block the asyncio event loop. A process that
+  exits returns everything; measured parent RSS stays flat at ~22MB across
+  repeated syncs. Cold start is ~1.1s end to end, still faster than the
+  LLM call it replaces.
+
+`verify_read` is the safety boundary: it only trusts a read when every
+card in `SYNC_CARD_LAST4` was found *and* the amount count matches, and
+requires the two decimal places (a dropped separator would read
+`1034226.06` as `103422606`). Anything else abstains → LLM. Keep it that
+way: unlike a miscategorized expense, a wrong number here writes a
+corrupted balance. The reply also itemizes each card's amount rather than
+only the total, which is what makes a misread catchable by the user before
+they tap a button — don't collapse that back to a single figure.
+
 There used to be a free-text `query` intent (read-only "how much did I
 spend"/"what's my balance" questions) and a receipt-photo OCR → LLM
 classification flow (`ocr.py`, `Receipt` model). Both were removed: the

@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     # why, and flip on to A/B it once you're comfortable with its behavior.
     local_parser_enabled: bool = Field(default=False, alias="LOCAL_PARSER_ENABLED")
 
+    # --- /sync screenshot OCR (card_ocr.py) -------------------------------
+    # Comma-separated last-4 digits of every card that shows a balance in
+    # your banking app's list, e.g. "1111,2222,3333,4444". This is the
+    # correctness guard for the local (no-LLM) OCR path: a read is only
+    # trusted when EVERY one of these cards was found in the screenshot and
+    # the amount count matches, which is what catches the dangerous failure
+    # (a whole card line silently missed, undercounting the total). Leave
+    # empty to disable local OCR entirely and always use the vision LLM.
+    sync_card_last4: str = Field(default="", alias="SYNC_CARD_LAST4")
+
+    @property
+    def sync_card_last4_set(self) -> frozenset[str]:
+        return frozenset(p.strip() for p in self.sync_card_last4.split(",") if p.strip())
+
     # --- Scheduled jobs (handlers/scheduled.py, handlers/backup.py) -------
     # Hour of day (0-23, in `timezone`) the daily recap and month-end summary
     # are sent, and the hour the monthly reconciliation prompt goes out.

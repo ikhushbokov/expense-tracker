@@ -10,5 +10,21 @@ matplotlib==3.10.0
 reportlab==4.2.5
 python-dateutil==2.9.0.post0
 
+# --- local /sync screenshot OCR (expense_ai/card_ocr.py) -------------------
+# These are rapidocr-onnxruntime's own runtime dependencies, listed here so
+# they're pinned in the usual place. rapidocr-onnxruntime itself is installed
+# separately with --no-deps (see the Dockerfile, and README's setup step):
+# it declares plain `opencv-python`, whose GUI build needs libgl1/libglib2.0-0
+# from apt -- ~200MB of Mesa/X11 drivers a headless bot never uses. Satisfying
+# it with opencv-python-headless instead is verified to work identically and
+# needs no system libraries at all.
+opencv-python-headless==5.0.0.93
+onnxruntime==1.28.0
+pyclipper==1.4.0
+shapely==2.1.2
+PyYAML==6.0.3
+six==1.17.0
+tqdm==4.70.0
+
 # --- dev/test dependencies ---
 pytest==8.3.4

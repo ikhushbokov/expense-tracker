@@ -1,21 +1,35 @@
 """Reconciles the tracked balance against a cards/accounts screenshot.
 
 Triggered by a photo captioned "sync" (see is_sync_photo(), and
-handlers/photo.py:handle_photo which routes to handle_sync_photo() instead
-of the receipt flow when it matches). The screenshot is sent directly to
-the LLM as vision input (base64 data URL, see _extract_card_amounts) --
-NOT run through Tesseract like receipts are. Tesseract measurably
-mis-read this exact bot's own incident screenshot (a digit: "29,768.32"
--> "29,768.52"; a bank name: "Aloqabank" -> "Alogabar", which is where the
-infamous "Alogabar" phantom expense came from), while the vision model
-got every value right on the same image. The LLM is asked to LIST each
-individual account/card balance shown -- explicitly NOT to sum them (see
-_extract_card_amounts's prompt); Python does the addition. This is
-deliberately its own narrow extraction call rather than going through
-parser.py's general set_balance intent (which asks the LLM for one
-pre-summed total_amount): summing several numbers is exactly the kind of
+handlers/photo.py:handle_photo which routes to handle_sync_photo() when it
+matches). The screenshot is read in two stages: card_ocr.py's local,
+no-LLM OCR is tried first, and only if it abstains does the image go to
+the LLM as vision input (base64 data URL, see _extract_card_amounts).
+
+Local OCR is deliberately NOT Tesseract, which measurably mis-read this
+exact bot's own incident screenshot (a digit: "29,768.32" -> "29,768.52";
+a bank name: "Aloqabank" -> "Alogabar", which is where the infamous
+"Alogabar" phantom expense came from) and kept doing so in every
+configuration tried later. card_ocr.py uses RapidOCR's PP-OCRv4 models
+instead, which read all 12 amounts and all 4 card numbers exactly across
+three real screenshots -- see that module's docstring for the measurements
+and for why it runs in a short-lived subprocess. It only ever returns a
+read that passes its own strict guards, so a screenshot it isn't sure
+about still reaches the LLM rather than being guessed at.
+
+Either way the extraction step only ever LISTS the individual balances --
+explicitly never sums them (see _extract_card_amounts's prompt); Python
+does the addition. Summing several numbers is exactly the kind of
 arithmetic an LLM has gotten wrong on this bot twice in production, and
-listing is a strictly easier, more mechanical task than adding.
+listing is a strictly easier, more mechanical task than adding. For the
+same reason this is its own narrow extraction call rather than going
+through parser.py's general set_balance intent, which asks the LLM for one
+pre-summed total_amount.
+
+The mismatch message itemizes every balance that was read (per card where
+known, see _render_breakdown) rather than only showing the total: a single
+misread digit is invisible in a summed figure, and this is the step where
+the user can still catch it before anything is applied.
 
 A mismatch isn't applied blindly: it's usually either (a) something
 genuinely unaccounted for (a bank fee, cashback, a correction with no
@@ -55,6 +69,7 @@ from pydantic import BaseModel
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
+from expense_ai.card_ocr import extract_card_read
 from expense_ai.config import settings
 from expense_ai.database import repository, session_scope
 from expense_ai.finance import coerce_category, format_amount, get_balances, reconcile_balance
@@ -78,6 +93,14 @@ If you can't find any balances, return {"amounts": [], "currency": "UZS"}.
 class _CardAmounts(BaseModel):
     amounts: list[float] = []
     currency: str = "UZS"
+    # Per-amount card last-4 when known (local OCR reads them; the LLM path
+    # isn't asked for them). Presentation only -- used to make the itemized
+    # breakdown checkable, never for any financial decision. Empty string
+    # means "no label for this amount".
+    labels: list[str] = []
+    # "local" (card_ocr.py) or "llm" -- surfaced in the reply so it's
+    # obvious which path ran.
+    source: str = "llm"
 
 
 # Strict JSON Schema for _CardAmounts, used as this call's response_schema
@@ -100,6 +123,20 @@ def _to_data_url(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
 
 
+def _from_data_url(image_data_url: str) -> bytes | None:
+    """Raw bytes back out of a data URL, or None if it isn't one. Needed
+    because build_sync_mismatch_response takes a data URL (that's what the
+    LLM call wants, and what the retry queue stores) while local OCR needs
+    the actual image."""
+    _, _, encoded = image_data_url.partition("base64,")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except Exception:  # noqa: BLE001 -- caller just falls back to the LLM
+        return None
+
+
 async def _extract_card_amounts(image_data_url: str) -> _CardAmounts:
     """List each balance shown in the screenshot -- deliberately does not
     ask the LLM to sum them; build_sync_mismatch_response does the
@@ -111,6 +148,26 @@ async def _extract_card_amounts(image_data_url: str) -> _CardAmounts:
         response_schema=_CARD_AMOUNTS_SCHEMA,
     )
     return _CardAmounts.model_validate(raw)
+
+
+async def _read_balances(image_data_url: str) -> _CardAmounts:
+    """Local OCR if it's confident, the vision LLM otherwise.
+
+    Only the LLM path can raise LLMError -- a successful local read means
+    /sync keeps working through a provider outage, and costs nothing.
+    """
+    image_bytes = _from_data_url(image_data_url)
+    if image_bytes is not None:
+        read = await extract_card_read(image_bytes, settings.sync_card_last4_set)
+        if read is not None:
+            logger.info("Read %d card balances locally, no LLM call", len(read.items))
+            return _CardAmounts(
+                amounts=read.amounts,
+                currency="UZS",  # implied by the "sum" suffix the OCR anchors on
+                labels=[label or "" for label, _amount in read.items],
+                source="local",
+            )
+    return await _extract_card_amounts(image_data_url)
 
 # How long a pending marker (the next photo after /sync, or the next text
 # reply describing a missed expense/income) stays valid before being
@@ -141,20 +198,34 @@ async def handle_sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+def _render_breakdown(extracted: _CardAmounts, currency: str) -> str:
+    """Every balance that was read, one per line, labelled with its card
+    where known. Shown in the reply so a misread digit is catchable before
+    anything is applied -- the summed total alone hides exactly that."""
+    lines = []
+    for index, amount in enumerate(extracted.amounts):
+        label = extracted.labels[index] if index < len(extracted.labels) else ""
+        formatted = format_amount(amount, currency)
+        lines.append(f"  • {label}: {formatted}" if label else f"  • {formatted}")
+    return "\n".join(lines)
+
+
 async def build_sync_mismatch_response(image_data_url: str) -> tuple[str, InlineKeyboardMarkup | None]:
     """Cards-screenshot data URL -> the reply: either the "already in
     sync" text (no buttons) or the mismatch text with the "sync anyway" /
     "log missed expense or income" buttons. Shared by the live path
     (handle_sync_photo) and the retry-queue path (handlers/retry.py) so a
-    delayed reply still asks instead of auto-applying. Raises LLMError if
-    the LLM is unreachable -- callers decide what to do about that."""
-    extracted = await _extract_card_amounts(image_data_url)
+    delayed reply still asks instead of auto-applying. Raises LLMError only
+    when it had to fall back to the LLM and that was unreachable -- a
+    confident local read never gets that far (see _read_balances)."""
+    extracted = await _read_balances(image_data_url)
 
     if not extracted.amounts:
         return "I read the screenshot but couldn't confidently total a balance from it.", None
 
     total_amount = round(sum(extracted.amounts), 2)
     currency = extracted.currency.upper().strip() or settings.default_currency
+    breakdown = _render_breakdown(extracted, currency)
 
     with session_scope() as session:
         current = get_balances(session, account="balance").get(currency, 0.0)
@@ -163,7 +234,8 @@ async def build_sync_mismatch_response(image_data_url: str) -> tuple[str, Inline
     if delta == 0:
         return (
             "✅ Already in sync — tracked balance matches your cards: "
-            f"{format_amount(total_amount, currency)}.",
+            f"{format_amount(total_amount, currency)}.\n\n"
+            f"Read from the screenshot:\n{breakdown}",
             None,
         )
 
@@ -171,6 +243,7 @@ async def build_sync_mismatch_response(image_data_url: str) -> tuple[str, Inline
     kind = "expense" if missing else "income"
     text = (
         "⚠️ Balance mismatch\n\n"
+        f"Read from the screenshot:\n{breakdown}\n\n"
         f"Tracked: {format_amount(current, currency)}\n"
         f"From your cards: {format_amount(total_amount, currency)}\n"
         f"Difference: {format_amount(abs(delta), currency)} ({'missing' if missing else 'extra'})\n\n"

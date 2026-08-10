@@ -65,6 +65,14 @@ free text — instant, and no LLM involved.
   as income or spending.
 - **Transfers**: "Transfer 200,000 from balance to savings" moves money
   between the two buckets without affecting your total net worth.
+- **Balance sync from a screenshot** (`/sync`): send a screenshot of your
+  banking app's card list and the bot reads each card's balance, sums them
+  in Python, and compares against the tracked balance. It shows the
+  per-card amounts it read (so a misread is visible) and asks whether to
+  apply it as a correction or log the difference as a missed
+  expense/income — nothing is written until you tap a button. Reading is
+  done locally with no LLM call when `SYNC_CARD_LAST4` is configured and
+  every listed card is found; otherwise it falls back to a vision model.
 - **Lending & borrowing**: recorded as a plain expense/income rather than a
   separate ledger — "Gave Aziz 300,000, he'll pay me back" is an expense,
   "Aziz paid me back 300,000" / "Borrowed 200k from Vali" is income.
@@ -104,6 +112,7 @@ expense_tracker/
 │   ├── llm.py                 # OpenAI-compatible client wrapper
 │   ├── parser.py               # LLM prompt + intent classification
 │   ├── local_parser.py          # No-LLM parsing for common expense/income/undo/export/chart messages
+│   ├── card_ocr.py               # No-LLM OCR of /sync card screenshots (RapidOCR, in a subprocess)
 │   ├── finance.py              # Balance / summary / category math
 │   ├── periods.py               # "this_month" -> (start, end) resolution
 │   ├── keyboards.py               # Shared month/week ◀/▶ pagination keyboards
@@ -154,6 +163,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Then the local `/sync` screenshot OCR engine, which needs `--no-deps` so its
+`opencv-python` dependency stays satisfied by the headless build pinned in
+`requirements.txt` (the GUI build would drag in ~200MB of Mesa/X11 system
+libraries this bot never uses):
+
+```bash
+pip install --no-deps rapidocr-onnxruntime==1.4.4
+```
+
 ### 3. Configure
 
 ```bash
@@ -172,6 +190,7 @@ Edit `.env`:
 | `DATABASE_PATH` | Path to the SQLite file (default `data/expenses.db`) |
 | `DEFAULT_CURRENCY` | Currency assumed when the user doesn't mention one |
 | `TZ` | IANA timezone (e.g. `Asia/Tashkent`). **Set this explicitly for Docker** — a container's clock is UTC by default regardless of the host machine's timezone, which otherwise makes every date/time the bot shows off by your UTC offset. |
+| `SYNC_CARD_LAST4` | Comma-separated last-4 digits of the cards shown in your banking app (e.g. `1111,2222,3333,4444`). Enables reading `/sync` screenshots locally with no LLM call; a read is only trusted when every listed card is found. Empty = always use the vision LLM. |
 
 #### Switching LLM providers
 
