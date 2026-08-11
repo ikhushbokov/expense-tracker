@@ -166,9 +166,13 @@ def test_token_seen_once_logs_as_other_unconfirmed():
 
 
 def test_accepts_when_token_seen_at_least_twice():
+    """The other side of the _MIN_VOTES boundary. Uses "app" rather than
+    "paid" as the repeated token: "paid" is a stopword now precisely
+    because it describes the transaction, not its category (see
+    _STOPWORDS), so it can no longer carry a vote either way."""
     with session_scope() as s:
-        repository.add_expense(s, amount=1, currency="UZS", category="Subscriptions", description="paid app")
-        repository.add_expense(s, amount=1, currency="UZS", category="Subscriptions", description="paid renewal")
+        repository.add_expense(s, amount=1, currency="UZS", category="Subscriptions", description="app renewal")
+        repository.add_expense(s, amount=1, currency="UZS", category="Subscriptions", description="app fee")
     with session_scope() as s:
         intent = local_parser.try_parse_locally(s, "40000 SSTP paid app")
     assert intent is not None
@@ -220,6 +224,77 @@ def test_explicit_category_with_no_description_words_falls_back_to_category_name
     assert intent is not None
     assert intent.category == "Other"
     assert intent.description == "Other"
+
+
+def test_stopwords_do_not_outvote_meaningful_words():
+    """Regression: "2,000,000 for university contract" was logged as Food.
+    "for" appeared in 7 unrelated descriptions (Food:4, Transport:2,
+    Family:1) and outvoted "university"/"contract", which both pointed at
+    Education. Frequency must never beat meaning."""
+    with session_scope() as s:
+        for description in ("Lunch for two", "Snack for later", "Food for guests", "Coffee for me"):
+            repository.add_expense(s, amount=1, currency="UZS", category="Food", description=description)
+        repository.add_expense(s, amount=1, currency="UZS", category="Transport", description="Taxi for airport")
+        repository.add_expense(s, amount=1, currency="UZS", category="Education", description="University fee")
+        repository.add_expense(s, amount=1, currency="UZS", category="Education", description="Contract payment")
+
+    with session_scope() as s:
+        intent = local_parser.try_parse_locally(s, "2,000,000 for university contract")
+    assert intent is not None
+    assert intent.category == "Education"
+
+
+def test_stopwords_are_never_recorded_as_history_keywords():
+    with session_scope() as s:
+        repository.add_expense(s, amount=1, currency="UZS", category="Food", description="Lunch for the office")
+    with session_scope() as s:
+        keywords = local_parser._build_category_keyword_map(s)
+    assert "lunch" in keywords
+    for stopword in ("for", "the"):
+        assert stopword not in keywords
+
+
+def test_multi_word_custom_category_is_matched_as_explicit():
+    """A two-word category was unmatchable while only the final word was
+    checked, which made `/category add University Contract` pointless."""
+    with session_scope() as s:
+        repository.add_custom_category(s, "University Contract")
+    with session_scope() as s:
+        intent = local_parser.try_parse_locally(s, "2000000 university contract")
+    assert intent is not None
+    assert intent.category == "University Contract"
+    assert intent.category_confirmed is True
+
+
+def test_multi_word_category_drops_a_stopword_only_description():
+    """"for" alone is not a description worth keeping -- fall back to the
+    category name rather than logging a bare preposition."""
+    with session_scope() as s:
+        repository.add_custom_category(s, "University Contract")
+    with session_scope() as s:
+        intent = local_parser.try_parse_locally(s, "2000000 for university contract")
+    assert intent.category == "University Contract"
+    assert intent.description == "University Contract"
+
+
+def test_multi_word_category_keeps_a_real_description():
+    with session_scope() as s:
+        repository.add_custom_category(s, "University Contract")
+    with session_scope() as s:
+        intent = local_parser.try_parse_locally(s, "2000000 second semester university contract")
+    assert intent.category == "University Contract"
+    assert intent.description == "Second semester"
+
+
+def test_longest_matching_category_suffix_wins():
+    """With both "Contract" and "University Contract" defined, the more
+    specific one must win instead of the shorter suffix matching first."""
+    with session_scope() as s:
+        repository.add_custom_category(s, "Contract")
+        repository.add_custom_category(s, "University Contract")
+    with session_scope() as s:
+        intent = local_parser.try_parse_locally(s, "2000000 university contract")
+    assert intent.category == "University Contract"
 
 
 def test_trailing_word_that_is_not_a_category_falls_through_to_inference():

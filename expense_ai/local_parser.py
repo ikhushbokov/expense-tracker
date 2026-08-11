@@ -36,17 +36,23 @@ person-name extraction to get right, because there's no separate ledger
 that needs a name to look someone's balance up in.
 
 One explicit convention on top of the expense parser's inferred-from-
-history path: if the LAST word left after the amount is removed exactly
-names a *known* category (case-insensitively -- "food", "Food", "FOOD"
-all count) -- the fixed CATEGORIES list, or anything added via /category
--- it's taken as an explicit category override rather than fed into the
-keyword vote, and everything before it becomes the description. This
-skips _MIN_VOTES/tie-breaking entirely (there's no ambiguity to guess
-about when the user just said the category), so it works even with zero
-prior history -- "45k lunch food" resolves locally the very first time,
-not just once "lunch" has been seen twice. New categories themselves are
-never invented here, or by the LLM -- see finance.known_categories'
-docstring -- only /category creates one, explicitly, on request.
+history path: if the text left after the amount is removed *ends* with
+the name of a *known* category (case-insensitively -- "food", "Food",
+"FOOD" all count) -- the fixed CATEGORIES list, or anything added via
+/category -- it's taken as an explicit category override rather than fed
+into the keyword vote, and everything before it becomes the description.
+Multi-word names count ("... university contract" -> "University
+Contract"), matched longest-first. This skips _MIN_VOTES/tie-breaking
+entirely (there's no ambiguity to guess about when the user just said the
+category), so it works even with zero prior history -- "45k lunch food"
+resolves locally the very first time, not just once "lunch" has been seen
+twice. New categories themselves are never invented here, or by the LLM
+-- see finance.known_categories' docstring -- only /category creates one,
+explicitly, on request.
+
+Words with no category signal ("for", "the", "paid", ...) are stripped
+before any voting -- see _STOPWORDS for why that's load-bearing rather
+than cosmetic.
 
 When an expense's category genuinely can't be resolved (new vocabulary,
 no explicit category word), _try_expense doesn't abstain either: it logs
@@ -152,6 +158,44 @@ _AMOUNT_RE = re.compile(
 
 _MAX_WORDS = 10
 
+# Words that carry no category signal and must never vote. Without this,
+# frequency beats meaning: "2,000,000 for university contract" was logged
+# as Food because "for" alone had 7 votes from unrelated history
+# (Food:4, Transport:2, Family:1), swamping "university"/"contract" which
+# pointed at Education. Tokens of 1-2 letters ("of", "to", "my", ...) are
+# already dropped by the length filter, so only 3+ letter words need
+# listing. Deliberately includes generic money verbs ("paid", "bought",
+# ...): they describe the transaction, never its category -- "paid" had
+# already been observed voting wrongly with total confidence.
+# Filtering too aggressively here is the safe direction (an abstain costs
+# nothing; see this module's docstring), so err that way when adding.
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # articles, conjunctions, prepositions
+        "the", "and", "but", "nor", "yet", "for", "with", "from", "into",
+        "onto", "than", "then", "that", "this", "these", "those", "there",
+        "here", "about", "after", "before", "during", "over", "under",
+        "again", "also", "just", "only", "very", "much", "too", "out",
+        "off", "per", "via", "all", "any", "some", "more", "most", "each",
+        "both", "same",
+        # pronouns and auxiliaries
+        "you", "your", "yours", "our", "ours", "his", "her", "hers", "him",
+        "she", "they", "them", "their", "was", "were", "been", "being",
+        "are", "has", "have", "had", "will", "would", "could", "should",
+        "can", "did", "does", "not", "who", "whom", "why", "how", "what",
+        "which", "when", "where",
+        # generic transaction verbs
+        "paid", "pay", "pays", "spent", "spend", "bought", "buy", "cost",
+        "costs", "got", "get", "gave", "give", "given", "took", "take",
+        "made", "make", "put", "sent", "send",
+    }
+)
+
+
+def _signal_tokens(text: str) -> list[str]:
+    """Words worth voting on: 3+ letters and not a stopword."""
+    return [t for t in re.findall(r"[a-z']+", text.lower()) if len(t) > 2 and t not in _STOPWORDS]
+
 # A word seen exactly once historically isn't real evidence -- e.g. "paid"
 # showed up once each under "Other" ("paid off my debt") and "Subscriptions"
 # ("SSTP paid app") in this bot's own data, and single-occurrence votes on
@@ -209,22 +253,43 @@ def _clean_description(text: str) -> str:
 
 
 def _split_explicit_category(session: Session, remaining_text: str) -> tuple[str, str] | None:
-    """If the last word of ``remaining_text`` exactly names a known
-    category (case-insensitive) -- fixed CATEGORIES, or anything added
-    via /category -- split it off as an explicit category override.
-    Returns (category, description) with that word removed and the rest
-    capitalized, or None if the last word doesn't name a category --
-    callers fall through to history-based inference."""
+    """If ``remaining_text`` *ends* with the name of a known category
+    (case-insensitive) -- fixed CATEGORIES, or anything added via
+    /category -- split it off as an explicit category override. Returns
+    (category, description) with those words removed and the rest
+    capitalized, or None if it doesn't end in a category name, in which
+    case callers fall through to history-based inference.
+
+    Multi-word names are matched too, longest suffix first, since custom
+    categories routinely have them ("University Contract") -- checking only
+    the final word meant `/category add University Contract` could never
+    actually be used, which defeated the point of adding it."""
     words = remaining_text.split()
     if not words:
         return None
-    last_word = re.sub(r"[^\w']", "", words[-1]).lower()
-    category_by_lower = {c.lower(): c for c in known_categories(session)}
-    category = category_by_lower.get(last_word)
-    if category is None:
-        return None
-    description = _clean_description(" ".join(words[:-1]))
-    return category, (description or category)
+
+    categories = known_categories(session)
+    category_by_lower = {c.lower(): c for c in categories}
+    longest = max((len(c.split()) for c in categories), default=1)
+
+    for size in range(min(longest, len(words)), 0, -1):
+        suffix = " ".join(words[-size:])
+        normalized = re.sub(r"\s+", " ", re.sub(r"[^\w\s']", "", suffix)).strip().lower()
+        category = category_by_lower.get(normalized)
+        if category is None:
+            continue
+        description = _clean_description(" ".join(words[:-size]))
+        # "2,000,000 for university contract" leaves "for" as the whole
+        # description -- meaningless on its own, so use the category name.
+        if _is_only_stopwords(description):
+            description = ""
+        return category, (description or category)
+    return None
+
+
+def _is_only_stopwords(text: str) -> bool:
+    words = re.findall(r"[a-z']+", text.lower())
+    return bool(words) and all(len(w) <= 2 or w in _STOPWORDS for w in words)
 
 
 def _build_category_keyword_map(session: Session) -> dict[str, Counter]:
@@ -234,9 +299,8 @@ def _build_category_keyword_map(session: Session) -> dict[str, Counter]:
     so there's no real caching/invalidation problem to solve here."""
     keywords: dict[str, Counter] = defaultdict(Counter)
     for expense in repository.list_expenses(session):
-        for token in re.findall(r"[a-z']+", (expense.description or "").lower()):
-            if len(token) > 2:
-                keywords[token][expense.category] += 1
+        for token in _signal_tokens(expense.description or ""):
+            keywords[token][expense.category] += 1
     return keywords
 
 
@@ -246,7 +310,7 @@ def _resolve_category(session: Session, remaining_text: str) -> tuple[str, str] 
     in the learned vocabulary (genuinely new wording), the vote is tied
     between two categories, or the total evidence is too thin (a word
     seen exactly once isn't a real signal -- see _MIN_VOTES)."""
-    tokens = [t for t in re.findall(r"[a-z']+", remaining_text.lower()) if len(t) > 2]
+    tokens = _signal_tokens(remaining_text)
     if not tokens:
         return None
 
