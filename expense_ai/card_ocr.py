@@ -66,15 +66,23 @@ logger = logging.getLogger(__name__)
 # generous ceiling for a loaded machine, not a target.
 OCR_TIMEOUT_SECONDS = 60.0
 
-# An amount line, matched against the text with spaces stripped, e.g.
-# "8068.32sum", "1316,51sum". The decimal separator is REQUIRED even
-# though the engine reports it inconsistently as "." or ",": Uzum always
-# renders two decimal places, and if the separator were ever dropped
-# ("103422606sum") the value would be 100x too large -- abstaining and
-# letting the LLM handle it is the safe direction there. Thousands
-# separators are spaces, which the engine drops entirely, so there's no
-# ambiguity left about which separator is decimal.
-_AMOUNT_RE = re.compile(r"(\d+)[.,](\d{2})sum", re.IGNORECASE)
+# An amount line, matched against the text with all spaces stripped, e.g.
+# "8268,32sum", "32626,7sum". Notes on the two deliberate strictnesses:
+#
+# * The decimal separator is REQUIRED (the engine reports it inconsistently
+#   as "." or ","). If it were ever dropped, "103422606sum" would parse
+#   100x too large; demanding it means such a read abstains to the LLM
+#   instead. Thousands separators are spaces, which the engine drops
+#   entirely, so whatever separator survives is unambiguously the decimal.
+# * One OR two decimal digits, and the whole line must be *nothing but*
+#   the amount and "sum" (fullmatch). Requiring exactly two digits was a
+#   real bug: the app drops a trailing zero, so a live screenshot showed
+#   "32 626,7 sum", which failed to parse and made /sync abstain on every
+#   attempt. The fullmatch is what keeps loosening the digit count safe --
+#   on a mangled number where a thousands space was misread as a comma
+#   ("1,034226,06sum"), an unanchored search would happily match the
+#   *tail* and silently return 34,226.06 instead of 1,034,226.06.
+_AMOUNT_RE = re.compile(r"(\d+)[.,](\d{1,2})sum", re.IGNORECASE)
 
 # A card line, e.g. "1111 · Uzum Card", "2222·Agrobank". The trailing
 # letter requirement is what stops "8068.32sum" from being read as card
@@ -120,7 +128,7 @@ def parse_ocr_lines(lines: list[str]) -> CardRead:
     pending: float | None = None
 
     for line in lines:
-        match = _AMOUNT_RE.search(re.sub(r"\s", "", line))
+        match = _AMOUNT_RE.fullmatch(re.sub(r"\s", "", line))
         if match is not None:
             if pending is not None:  # two amounts in a row -> no label for the first
                 items.append((None, pending))

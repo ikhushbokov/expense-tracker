@@ -137,6 +137,50 @@ def test_abstains_when_nothing_was_read():
     assert verify_read(parse_ocr_lines([]), EXPECTED_CARDS) is False
 
 
+# Verbatim OCR output from a real /sync that failed in production, card
+# digits swapped for placeholders. The Agrobank line has only ONE decimal
+# digit -- the app drops a trailing zero -- which the original
+# exactly-two-digits rule rejected, so /sync abstained on every attempt.
+LIVE_SCREENSHOT = [
+    "14:28-",
+    "UzumBank",
+    "Islomjon >",
+    "Privilegesare",
+    "3%cashback",
+    "8 268,32 sum",
+    "VISA",
+    "1111·UzumCard",
+    "Openaflexibledeposit",
+    "Withdrawatanytime",
+    "32 626,7 sum",
+    "2222·Agrobank",
+    "200 968,58 sum",
+    "3333·Aloqabank",
+    "2 248 566,06 sum",
+    "4444·Kapitalbank",
+    "All products",
+    "Main",
+]
+
+
+def test_reads_an_amount_with_a_single_decimal_digit():
+    """Regression: "32 626,7 sum" (trailing zero dropped by the app) used
+    to be skipped, leaving 3 amounts for 4 cards -> permanent abstain."""
+    read = parse_ocr_lines(LIVE_SCREENSHOT)
+    assert read.amounts == [8268.32, 32626.7, 200968.58, 2248566.06]
+    assert read.total == 2_490_429.66
+    assert verify_read(read, EXPECTED_CARDS) is True
+
+
+def test_amount_is_ignored_when_the_line_holds_more_than_the_amount():
+    """Only a line that is *nothing but* an amount plus "sum" counts. This
+    is what makes accepting 1-2 decimals safe: on a mangled number whose
+    thousands space was misread as a comma, an unanchored match would take
+    the tail and silently report 34,226.06 instead of 1,034,226.06."""
+    assert parse_ocr_lines(["1,034226,06sum"]).amounts == []
+    assert parse_ocr_lines(["total 1034226,06 sum today"]).amounts == []
+
+
 def test_abstains_when_the_decimal_separator_is_missing():
     """A dropped separator would read 1034226.06 as 103422606 -- 100x too
     large. Requiring two decimals means that becomes an abstain (and an

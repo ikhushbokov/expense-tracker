@@ -83,6 +83,10 @@ async def _retry_balance_sync(context: ContextTypes.DEFAULT_TYPE, item: PendingM
         await context.bot.send_message(chat_id=item.chat_id, text=RETRIED_PREFIX + text, reply_markup=markup)
         with session_scope() as session:
             repository.delete_pending_message(session, item.id)
-        logger.info("Delivered queued sync-mismatch prompt %s after LLM reconnect", item.id)
+        # Deliberately doesn't say "after LLM reconnect": a queued sync can
+        # now also clear because card_ocr.py read the screenshot locally
+        # while the LLM was still down, and claiming a reconnect that never
+        # happened sends you looking in the wrong place.
+        logger.info("Delivered queued sync-mismatch prompt %s", item.id)
     except Exception:
         logger.exception("Processed queued sync %s but failed to deliver the reply; will retry next tick", item.id)
